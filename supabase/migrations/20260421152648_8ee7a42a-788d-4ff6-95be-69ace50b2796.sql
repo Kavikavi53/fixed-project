@@ -1,0 +1,1 @@
+ALTER TABLE public.payment_history ALTER COLUMN amount SET DEFAULT 530;
