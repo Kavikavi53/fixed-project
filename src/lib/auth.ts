@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import type { UserRole } from "./store";
 
-const ACCESS_CODE = "AKK2026AL";
+const ACCESS_CODE = "AKK2026";
 
 export interface AppUser {
   id: string;
