@@ -8,13 +8,15 @@ interface Props {
   user: AppUser;
   onLogout: () => void;
   realtimeStatus?: RealtimeStatus;
+  lang: "en" | "ta";
+  onLangChange: (l: "en" | "ta") => void;
 }
 
-export default function DashboardHeader({ user, onLogout, realtimeStatus = "connecting" }: Props) {
+export default function DashboardHeader({ user, onLogout, realtimeStatus = "connecting", lang, onLangChange }: Props) {
   const statusConfig = {
-    live: { icon: Wifi, color: "text-success", label: "Live", pulse: true },
-    connecting: { icon: Loader2, color: "text-warning", label: "Sync...", pulse: false },
-    offline: { icon: WifiOff, color: "text-destructive", label: "Offline", pulse: false },
+    live: { icon: Wifi, color: "text-success", label: lang === "en" ? "Live" : "நேரடி", pulse: true },
+    connecting: { icon: Loader2, color: "text-warning", label: lang === "en" ? "Sync..." : "இணைக்கிறது...", pulse: false },
+    offline: { icon: WifiOff, color: "text-destructive", label: lang === "en" ? "Offline" : "இணைப்பில்லை", pulse: false },
   }[realtimeStatus];
   const Icon = statusConfig.icon;
 
@@ -28,11 +30,15 @@ export default function DashboardHeader({ user, onLogout, realtimeStatus = "conn
           <div>
             <h1 className="text-sm font-bold text-foreground leading-tight">A.M.V Season Tickets</h1>
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-              {user.role === "admin" ? "Admin Panel" : "Student Portal"}
+              {user.role === "admin"
+                ? (lang === "en" ? "Admin Panel" : "நிர்வாக பலகை")
+                : (lang === "en" ? "Student Portal" : "மாணவர் போர்டல்")}
             </p>
           </div>
         </div>
+
         <div className="flex items-center gap-2">
+          {/* Status */}
           <div className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full bg-secondary/60 ${statusConfig.color}`}>
             <span className="relative flex w-2 h-2">
               {statusConfig.pulse && (
@@ -42,10 +48,36 @@ export default function DashboardHeader({ user, onLogout, realtimeStatus = "conn
             </span>
             <span className="text-[10px] font-semibold uppercase tracking-wider">{statusConfig.label}</span>
           </div>
-          <span className="text-xs text-muted-foreground hidden md:inline">
-            {user.email}
-          </span>
+
+          {/* Email */}
+          <span className="text-xs text-muted-foreground hidden md:inline">{user.email}</span>
+
+          {/* Language Switch */}
+          <div className="flex items-center bg-secondary rounded-lg p-0.5 gap-0.5">
+            <button
+              onClick={() => onLangChange("en")}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                lang === "en"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              EN
+            </button>
+            <button
+              onClick={() => onLangChange("ta")}
+              className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-all ${
+                lang === "ta"
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              த
+            </button>
+          </div>
+
           <ThemeToggle />
+
           <Button variant="ghost" size="icon" onClick={onLogout} className="text-muted-foreground hover:text-destructive">
             <LogOut className="w-4 h-4" />
           </Button>
