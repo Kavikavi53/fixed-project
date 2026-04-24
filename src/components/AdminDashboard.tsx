@@ -20,6 +20,7 @@ import EditStudentDialog from "./EditStudentDialog";
 import StatsCard from "./StatsCard";
 import ReportsTab from "./ReportsTab";
 import StudentAvatar from "./StudentAvatar";
+import LiveClock from "./LiveClock";
 import { supabase } from "@/integrations/supabase/client";
 import type { Student, Announcement, AuditEntry, PaymentHistory, PaymentStatus, Batch, Stream } from "@/lib/store";
 
@@ -167,6 +168,19 @@ export default function AdminDashboard({
 
   return (
     <div className="container mx-auto p-4 space-y-6 max-w-7xl">
+
+      {/* Month + Clock header */}
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+        className="glass-card rounded-xl px-5 py-3 flex items-center justify-between border border-primary/20">
+        <div>
+          <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium">Current Month</p>
+          <p className="text-base font-bold text-foreground">
+            {new Date().toLocaleString("en-IN", { month: "long", year: "numeric" })}
+          </p>
+        </div>
+        <LiveClock />
+      </motion.div>
+
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <StatsCard title="Total Students" value={stats.total} icon={Users} delay={0} />
         <StatsCard title="Paid" value={stats.paid} icon={CheckCircle} variant="success" delay={0.05} />

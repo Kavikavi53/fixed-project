@@ -49,6 +49,11 @@ export default function StudentDashboard({ student, announcements, paymentHistor
     setSending(false);
   };
 
+  const now = new Date();
+  const dayOfMonth = now.getDate();
+  const currentMonth = now.toLocaleString("ta-IN", { month: "long", year: "numeric" });
+  const isLateWarning = student.payment_status === "late" && dayOfMonth >= 26;
+
   const paymentColor = {
     paid: "from-emerald-500/20 to-emerald-600/10 border-emerald-500/30",
     pending: "from-amber-500/20 to-amber-600/10 border-amber-500/30",
@@ -189,6 +194,20 @@ export default function StudentDashboard({ student, announcements, paymentHistor
             <StatusBadge status={student.payment_status} />
           </div>
         </div>
+
+        {/* Late Warning — 26th and after */}
+        {isLateWarning && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-3 p-3 rounded-xl bg-red-500/15 border border-red-500/30 flex items-start gap-2"
+          >
+            <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-red-400 leading-relaxed font-medium">
+              நீங்கள் பணம் செலுத்த தாமதமானதால் <span className="font-bold text-red-300">{currentMonth}</span> மாதத்துக்குரிய பயன்களை பெற்றுக்கொள்ள முடியாது.
+            </p>
+          </motion.div>
+        )}
 
         {/* Payment History toggle */}
         {studentPayments.length > 0 && (

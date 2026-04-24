@@ -1,17 +1,24 @@
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { FileSpreadsheet, FileText, Filter } from "lucide-react";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import StatusBadge from "./StatusBadge";
 import type { Student, PaymentHistory } from "@/lib/store";
 import { toast } from "sonner";
+import templateUrl from "@/assets/season_template.xlsx?url";
 
 interface Props {
   students: Student[];
   paymentHistory: PaymentHistory[];
 }
+
+const DEFAULT_FROM = "Kilinochchi";
+const DEFAULT_TO = "AMV";
+const DEFAULT_ROUTE = 803;
 
 function getMonthOptions() {
   const opts: { value: string; label: string }[] = [];
@@ -25,14 +32,12 @@ function getMonthOptions() {
   return opts;
 }
 
-function formatDob(dob: string | null): string {
-  if (!dob) return "";
-  return dob.replace(/-/g, ".");
-}
-
-function genderVal(g: string | null | undefined): string {
-  if (g === "male") return "boy";
-  if (g === "female") return "girl";
+function genderLabel(s: Student): string {
+  // Try infer from any available hint; default blank
+  const anyS = s as any;
+  const g = (anyS.gender ?? anyS.sex ?? "").toString().toLowerCase();
+  if (g.startsWith("m") || g === "boy" || g === "ஆண்") return "ஆண்";
+  if (g.startsWith("f") || g === "girl" || g === "பெண்") return "பெண்";
   return "";
 }
 
@@ -57,388 +62,239 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
     });
   }, [students, paymentHistory, month, batchFilter, streamFilter]);
 
-  // ══════════════════════════════════════════════
-  // EXCEL — exact இலங்கை போக்குவரத்து சபை format
-  // ══════════════════════════════════════════════
-  const handleExcel = () => {
+  const handleExcel = async () => {
     if (rows.length === 0) { toast.error("No students to export"); return; }
+    try {
+      const res = await fetch(templateUrl);
+      const buf = await res.arrayBuffer();
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(buf);
 
-    const wb = XLSX.utils.book_new();
-    const PAGE_SIZE = 25;
-    const pages = Math.ceil(rows.length / PAGE_SIZE);
+      // Use the first sheet as the master template; remove other sheets
+      const ws = wb.worksheets[0];
+      // Remove additional sheets so output is single-page model
+      for (let i = wb.worksheets.length - 1; i >= 1; i--) {
+        wb.removeWorksheet(wb.worksheets[i].id);
+      }
 
-    // Cell style helpers
-    const font = (sz = 11, bold = false) => ({ name: "Arial Unicode MS", sz, bold });
-    const thin = { style: "thin" as const };
-    const border = { top: thin, bottom: thin, left: thin, right: thin };
-    const align = (h: string, wrap = true) => ({ horizontal: h, vertical: "center", wrapText: wrap });
-
-    for (let page = 0; page < pages; page++) {
-      const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-      // Build AOA (array of arrays) — 40 rows x 15 cols (A..O)
-      // We'll use col index 0=A ... 14=O
-      const NUM_ROWS = 40;
-      const NUM_COLS = 15;
-      const aoa: any[][] = Array.from({ length: NUM_ROWS }, () => Array(NUM_COLS).fill(""));
-
-      // Helper: set cell by col letter + row (1-based)
-      const C = (col: string, row: number) => {
-        const colIdx = col.charCodeAt(0) - 65; // A=0
-        return { r: row - 1, c: colIdx };
+      // Page setup: A4 landscape, fit to page
+      ws.pageSetup = {
+        ...(ws.pageSetup || {}),
+        paperSize: 9, // A4
+        orientation: "landscape",
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 1,
+        margins: { left: 0.3, right: 0.3, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 },
       };
 
-      // ROW 3 — title
-      aoa[2][3] = "இலங்கை போக்குவரத்து சபை - வடக்கு"; // D3
-      aoa[2][13] = "படிவ இல 2"; // N3
+      // Fill term row J8 with selected month label
+      const termCell = ws.getCell("J8");
+      termCell.value = `தவணை : ${monthLabel}`;
 
-      // ROW 4 — sub title
-      aoa[3][4] = "பாடசாலை மாணவர்களுக்கான பருவ கால சீட்டு விண்ணப்ப படிவம்"; // E4
-
-      // ROW 6 — school + road
-      aoa[5][2] = "பெயர் :-கிளி/அக்கராயன் மகா வித்தியாலயம்"; // C6
-      aoa[5][9] = "வழங்கும் சாலை : கிளிநொச்சி சாலை"; // J6
-
-      // ROW 7 — address
-      aoa[6][2] = "விலாசம் :-அக்கராயன்குளம், கிளிநொச்சி."; // C7
-
-      // ROW 8 — grade + season
-      aoa[7][2] = "வகுப்பு தரம் :-க.பொ.த உயர்தரம் 12,13"; // C8
-      aoa[7][9] = "தவணை …............................இருந்து …....................................வரை"; // J8
-
-      // ROW 10 — column headers
-      aoa[9][2]  = "தொடர் இல";           // C10
-      aoa[9][3]  = "மாணவர் பெயர்";       // D10
-      aoa[9][4]  = "அடையாள அட்டை இலக்கம்"; // E10
-      aoa[9][5]  = "Date of Birth";       // F10
-      aoa[9][6]  = "ஆண் பெண்";           // G10
-      aoa[9][7]  = "பயணம் செய்யுமிடம் இருந்து        வரை"; // H10
-      aoa[9][9]  = "பாதை இல";            // J10
-      aoa[9][10] = "மாணவர் ஒப்பம்";      // K10
-      aoa[9][11] = "பெறுமதி";            // L10
-      aoa[9][12] = "காரியாலய பாவிப்புக்கு மட்டும் வழங்கப்பட்ட மாதங்கள்"; // M10
-
-      // ROWS 11-35 — student data
-      for (let i = 0; i < PAGE_SIZE; i++) {
-        const rowIdx = 10 + i; // 0-based, row 11 = index 10
-        const serial = page * PAGE_SIZE + i + 1;
-        aoa[rowIdx][2] = serial; // C
-
-        if (i < pageRows.length) {
-          const r = pageRows[i];
-          const st = r.student as any;
-          aoa[rowIdx][3]  = st.full_name;              // D
-          aoa[rowIdx][4]  = st.nic ?? "";               // E
-          aoa[rowIdx][5]  = formatDob(st.dob);          // F
-          aoa[rowIdx][6]  = genderVal(st.gender);       // G
-          aoa[rowIdx][7]  = "Kilinochchi";              // H
-          aoa[rowIdx][8]  = "AMV";                      // I
-          aoa[rowIdx][9]  = 803;                        // J
-          aoa[rowIdx][10] = "";                         // K (signature)
-          aoa[rowIdx][11] = "";                         // L (price)
-          aoa[rowIdx][12] = monthLabel;                 // M (month - merged M:O)
-        } else {
-          aoa[rowIdx][7]  = "Kilinochchi";
-          aoa[rowIdx][8]  = "AMV";
-        }
+      // Fill student rows starting at row 11
+      const startRow = 11;
+      // Clear existing sample rows 11..35 first (preserve formatting)
+      for (let r = startRow; r <= 35; r++) {
+        ["C","D","E","F","G","H","I","J","K","L","M","N","O"].forEach(col => {
+          const cell = ws.getCell(`${col}${r}`);
+          cell.value = null;
+        });
       }
 
-      // ROW 36-37 — footer text
-      aoa[35][2] = "மேற்தரப்பட்ட மாணவர்கள் யாவரும் இப்பாடசாலையில் முழு நேர மாணவர்களாக கல்வி கற்பவர்கள் என்றும் மேலும் இவர்கள் பிற இடங்களில் பகுதிநேர வேலைக்கென அமர்த்தப்பட்டவர்கள் அல்ல என்றும் இவர்களுக்கு பருவ கால சீட்டு வழங்கலாம் என்றும் சிபாரிசு செய்கின்றேன்";
-
-      // ROW 38
-      aoa[37][2]  = "வகுப்பாசிரியர் பெயர்….........................";
-      aoa[37][11] = "சீட்டு தயாரித்து வழங்கியவர்…...............";
-
-      // ROW 39
-      aoa[38][2]  = "வகுப்பாசிரியர் ஒப்பம்…........................";
-      aoa[38][6]  = "பதிவாளர் ஒப்பம்…...................";
-      aoa[38][9]  = "திகதி….....................";
-      aoa[38][11] = "சீட்டு கொடுபட வேண்டிய திகதி…............";
-
-      // ROW 40
-      aoa[39][11] = "சாலை அதிபரின் ஒப்பம்...…….................";
-
-      // Create worksheet
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-      // Column widths
-      ws["!cols"] = [
-        { wch: 3 },    // A
-        { wch: 3 },    // B
-        { wch: 13 },   // C - தொடர்
-        { wch: 25.7 }, // D - பெயர்
-        { wch: 22.7 }, // E - NIC
-        { wch: 17.9 }, // F - DOB
-        { wch: 8 },    // G - ஆண் பெண்
-        { wch: 12 },   // H - from
-        { wch: 9.7 },  // I - AMV
-        { wch: 8 },    // J - route
-        { wch: 14.9 }, // K - signature
-        { wch: 13 },   // L - price
-        { wch: 13 },   // M - month
-        { wch: 13 },   // N
-        { wch: 13 },   // O
-      ];
-
-      // Row heights
-      ws["!rows"] = Array.from({ length: 40 }, (_, i) => {
-        if (i === 2 || i === 3) return { hpt: 18 };
-        if (i === 9) return { hpt: 30 };
-        if (i === 35) return { hpt: 28 };
-        return { hpt: 15 };
+      rows.forEach((r, idx) => {
+        const rowIdx = startRow + idx;
+        if (rowIdx > 35) return; // template sheet capacity
+        ws.getCell(`C${rowIdx}`).value = idx + 1;                     // தொடர் இல
+        ws.getCell(`D${rowIdx}`).value = r.student.full_name;          // மாணவர் பெயர்
+        ws.getCell(`E${rowIdx}`).value = r.student.nic ?? "";          // அடையாள அட்டை
+        ws.getCell(`F${rowIdx}`).value = r.student.dob ?? "";          // DOB
+        ws.getCell(`G${rowIdx}`).value = genderLabel(r.student);       // ஆண்/பெண்
+        ws.getCell(`H${rowIdx}`).value = DEFAULT_FROM;                 // இருந்து
+        ws.getCell(`I${rowIdx}`).value = DEFAULT_TO;                   // வரை
+        ws.getCell(`J${rowIdx}`).value = DEFAULT_ROUTE;                // பாதை இல
+        // K (மாணவர் ஒப்பம்), L (பெறுமதி), M..O (மாதங்கள்) → blank
       });
 
-      // Merges — exact from original
-      ws["!merges"] = [
-        { s: { r: 2, c: 3 }, e: { r: 2, c: 8 } },   // D3:I3 - title
-        { s: { r: 2, c: 13 }, e: { r: 3, c: 14 } },  // N3:O4 - படிவ இல 2
-        { s: { r: 3, c: 4 }, e: { r: 3, c: 11 } },   // E4:L4 - subtitle
-        { s: { r: 5, c: 2 }, e: { r: 5, c: 4 } },    // C6:E6 - school name
-        { s: { r: 5, c: 9 }, e: { r: 5, c: 14 } },   // J6:O6 - road
-        { s: { r: 6, c: 2 }, e: { r: 6, c: 4 } },    // C7:E7 - address
-        { s: { r: 7, c: 2 }, e: { r: 7, c: 4 } },    // C8:E8 - grade
-        { s: { r: 9, c: 7 }, e: { r: 9, c: 8 } },    // H10:I10 - from/to header
-        { s: { r: 9, c: 12 }, e: { r: 9, c: 14 } },  // M10:O10 - month header
-        { s: { r: 35, c: 2 }, e: { r: 36, c: 14 } }, // C36:O37 - footer text
-        { s: { r: 37, c: 2 }, e: { r: 37, c: 3 } },  // C38:D38
-        { s: { r: 37, c: 11 }, e: { r: 37, c: 14 } }, // L38:O38
-        { s: { r: 38, c: 2 }, e: { r: 38, c: 3 } },  // C39:D39
-        { s: { r: 38, c: 6 }, e: { r: 38, c: 8 } },  // G39:I39
-        { s: { r: 38, c: 9 }, e: { r: 38, c: 10 } }, // J39:K39
-        { s: { r: 38, c: 11 }, e: { r: 38, c: 14 } }, // L39:O39
-        { s: { r: 39, c: 11 }, e: { r: 39, c: 14 } }, // L40:O40
-        // Merge M:O for each data row (month column)
-        ...Array.from({ length: PAGE_SIZE }, (_, i) => ({
-          s: { r: 10 + i, c: 12 }, e: { r: 10 + i, c: 14 }
-        })),
-      ];
-
-      // Apply styles using XLSX cell style format
-      const styleHeader = { font: font(12, true), alignment: align("center") };
-      const styleSubH  = { font: font(11, false), alignment: align("center") };
-      const styleLabel = { font: font(11), alignment: align("left") };
-      const styleColH  = { font: font(11), alignment: align("center"), border };
-      const styleData  = { font: font(11), alignment: align("center"), border };
-      const styleDataL = { font: font(11), alignment: align("left"), border };
-      const styleFooter= { font: font(10), alignment: align("left", true) };
-
-      // Title row styles
-      ws["D3"] = { ...ws["D3"], s: styleHeader };
-      ws["N3"] = { ...ws["N3"], s: styleSubH };
-      ws["E4"] = { ...ws["E4"], s: styleSubH };
-      ws["C6"] = { ...ws["C6"], s: styleLabel };
-      ws["J6"] = { ...ws["J6"], s: styleLabel };
-      ws["C7"] = { ...ws["C7"], s: styleLabel };
-      ws["C8"] = { ...ws["C8"], s: styleLabel };
-      ws["J8"] = { ...ws["J8"], s: styleLabel };
-
-      // Column header styles
-      for (const col of ["C","D","E","F","G","H","J","K","L","M"]) {
-        const addr = `${col}10`;
-        if (ws[addr]) ws[addr] = { ...ws[addr], s: styleColH };
-      }
-
-      // Data row styles
-      for (let i = 0; i < PAGE_SIZE; i++) {
-        const row = 11 + i;
-        if (ws[`C${row}`]) ws[`C${row}`] = { ...ws[`C${row}`], s: styleData };
-        if (ws[`D${row}`]) ws[`D${row}`] = { ...ws[`D${row}`], s: styleDataL };
-        for (const col of ["E","F","G","H","I","J","K","L","M","N","O"]) {
-          const addr = `${col}${row}`;
-          if (!ws[addr]) ws[addr] = { t: "s", v: "", s: styleData };
-          else ws[addr] = { ...ws[addr], s: styleData };
-        }
-      }
-
-      // Footer styles
-      ws["C36"] = { ...ws["C36"], s: styleFooter };
-      for (const addr of ["C38","L38","C39","G39","J39","L39","L40"]) {
-        if (ws[addr]) ws[addr] = { ...ws[addr], s: styleFooter };
-      }
-
-      const sheetName = pages > 1 ? `Page ${page + 1}` : "Report";
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+      const out = await wb.xlsx.writeBuffer();
+      const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Season_Report_${month}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Excel downloaded");
+    } catch (e: any) {
+      console.error(e);
+      toast.error("Excel export failed: " + (e?.message ?? "unknown"));
     }
-
-    XLSX.writeFile(wb, `Season_Ticket_${month}.xlsx`);
-    toast.success(`Excel downloaded — ${rows.length} students, ${pages} page(s)`);
   };
 
-  // ══════════════════════════════════════════════
-  // PDF — இலங்கை போக்குவரத்து சபை format
-  // (English text only for PDF — Tamil shown as header info)
-  // ══════════════════════════════════════════════
-  const handlePDF = () => {
+  const ensureTamilFont = async () => {
+    const id = "noto-tamil-font-link";
+    if (!document.getElementById(id)) {
+      const link = document.createElement("link");
+      link.id = id;
+      link.rel = "stylesheet";
+      link.href = "https://fonts.googleapis.com/css2?family=Noto+Sans+Tamil:wght@400;600;700&display=swap";
+      document.head.appendChild(link);
+    }
+    // Wait for the font to actually load (browser shapes Tamil correctly with it)
+    try {
+      await (document as any).fonts.load('14px "Noto Sans Tamil"');
+      await (document as any).fonts.load('700 14px "Noto Sans Tamil"');
+      await (document as any).fonts.ready;
+    } catch {}
+  };
+
+  const handlePDF = async () => {
     if (rows.length === 0) { toast.error("No students to export"); return; }
+    let host: HTMLDivElement | null = null;
+    try {
+      await ensureTamilFont();
 
-    // Dynamic import to avoid SSR issues
-    import("jspdf").then(({ default: jsPDF }) =>
-      import("jspdf-autotable").then(({ default: autoTable }) => {
-        const PAGE_SIZE = 25;
-        const pages = Math.ceil(rows.length / PAGE_SIZE);
-        const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      // A4 landscape @ 96dpi ≈ 1123 x 794 px
+      const PAGE_W = 1123;
+      host = document.createElement("div");
+      host.style.position = "fixed";
+      host.style.left = "-10000px";
+      host.style.top = "0";
+      host.style.width = `${PAGE_W}px`;
+      host.style.background = "#ffffff";
+      host.style.color = "#000000";
+      host.style.fontFamily = '"Noto Sans Tamil", "Latha", Arial, sans-serif';
+      host.style.padding = "24px 28px";
+      host.style.boxSizing = "border-box";
 
-        for (let page = 0; page < pages; page++) {
-          if (page > 0) doc.addPage("a4", "landscape");
-          const pageRows = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+      const esc = (s: any) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as any)[c]);
 
-          // ── HEADER BOX ──
-          doc.setDrawColor(0);
-          doc.setLineWidth(0.5);
-          doc.rect(8, 5, 281, 32); // outer box
+      const rowsHtml = rows.map((r, i) => `
+        <tr>
+          <td style="text-align:center;">${i + 1}</td>
+          <td>${esc(r.student.full_name)}</td>
+          <td style="text-align:center;">${esc(r.student.nic ?? "")}</td>
+          <td style="text-align:center;">${esc(r.student.dob ?? "")}</td>
+          <td style="text-align:center;">${esc(genderLabel(r.student))}</td>
+          <td style="text-align:center;">${DEFAULT_FROM}</td>
+          <td style="text-align:center;">${DEFAULT_TO}</td>
+          <td style="text-align:center;">${DEFAULT_ROUTE}</td>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>`).join("");
 
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(12);
-          doc.text("SRI LANKA TRANSPORT BOARD - NORTH", 148, 12, { align: "center" });
-          doc.text("(இலங்கை போக்குவரத்து சபை - வடக்கு)", 148, 18, { align: "center" });
+      host.innerHTML = `
+        <div style="position:relative;">
+          <div style="position:absolute;right:0;top:0;font-size:12px;">படிவ இல 2</div>
+          <h1 style="text-align:center;margin:0;font-size:20px;font-weight:700;">இலங்கை போக்குவரத்து சபை - வடக்கு</h1>
+          <h2 style="text-align:center;margin:6px 0 14px;font-size:15px;font-weight:600;">பாடசாலை மாணவர்களுக்கான பருவ கால சீட்டு விண்ணப்ப படிவம்</h2>
+        </div>
+        <table style="width:100%;font-size:12px;margin-bottom:8px;border-collapse:collapse;">
+          <tr>
+            <td style="width:55%;padding:2px 0;">பெயர் : கிளி/அக்கராயன் மகா வித்தியாலயம்</td>
+            <td style="padding:2px 0;">வழங்கும் சாலை : கிளிநொச்சி சாலை</td>
+          </tr>
+          <tr>
+            <td style="padding:2px 0;">விலாசம் : அக்கராயன்குளம், கிளிநொச்சி.</td>
+            <td style="padding:2px 0;">தவணை : ${esc(monthLabel)}</td>
+          </tr>
+          <tr>
+            <td style="padding:2px 0;">வகுப்பு தரம் : க.பொ.த உயர்தரம் 12,13</td>
+            <td></td>
+          </tr>
+        </table>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed;">
+          <colgroup>
+            <col style="width:5%;" />
+            <col style="width:15%;" />
+            <col style="width:11%;" />
+            <col style="width:8%;" />
+            <col style="width:6%;" />
+            <col style="width:8%;" />
+            <col style="width:7%;" />
+            <col style="width:5%;" />
+            <col style="width:10%;" />
+            <col style="width:6%;" />
+            <col style="width:19%;" />
+          </colgroup>
+          <thead>
+            <tr style="background:#dce6f5;">
+              <th style="border:1px solid #555;padding:5px 3px;">தொடர் இல</th>
+              <th style="border:1px solid #555;padding:5px 3px;">மாணவர் பெயர்</th>
+              <th style="border:1px solid #555;padding:5px 3px;">அடையாள அட்டை இலக்கம்</th>
+              <th style="border:1px solid #555;padding:5px 3px;">Date of Birth</th>
+              <th style="border:1px solid #555;padding:5px 3px;">ஆண்/பெண்</th>
+              <th style="border:1px solid #555;padding:5px 3px;">பயணம் இருந்து</th>
+              <th style="border:1px solid #555;padding:5px 3px;">வரை</th>
+              <th style="border:1px solid #555;padding:5px 3px;">பாதை இல</th>
+              <th style="border:1px solid #555;padding:5px 3px;">மாணவர் ஒப்பம்</th>
+              <th style="border:1px solid #555;padding:5px 3px;">பெறுமதி</th>
+              <th style="border:1px solid #555;padding:5px 3px;">காரியாலய பாவிப்புக்கு மட்டும் வழங்கப்பட்ட மாதங்கள்</th>
+            </tr>
+          </thead>
+          <tbody style="font-family:inherit;">
+            ${rowsHtml.replace(/<td/g, '<td style="border:1px solid #777;padding:5px 4px;"').replace(/style="border:1px solid #777;padding:5px 4px;" style="text-align:center;"/g, 'style="border:1px solid #777;padding:5px 4px;text-align:center;"')}
+          </tbody>
+        </table>
+        <p style="font-size:11px;margin-top:10px;line-height:1.5;">மேற்தரப்பட்ட மாணவர்கள் யாவரும் இப்பாடசாலையில் முழு நேர மாணவர்களாக கல்வி கற்பவர்கள் என்றும், இவர்களுக்கு பருவ கால சீட்டு வழங்கலாம் என்றும் சிபாரிசு செய்கின்றேன்.</p>
+        <table style="width:100%;font-size:11px;margin-top:18px;border-collapse:collapse;">
+          <tr>
+            <td style="padding:6px 0;width:50%;">வகுப்பாசிரியர் பெயர் : ........................</td>
+            <td style="padding:6px 0;">சீட்டு தயாரித்து வழங்கியவர் : ...............</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;">வகுப்பாசிரியர் ஒப்பம் : ........................</td>
+            <td style="padding:6px 0;">சீட்டு கொடுபட வேண்டிய திகதி : ............</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;">பதிவாளர் ஒப்பம் : ...................&nbsp;&nbsp;&nbsp;&nbsp;திகதி : ....................</td>
+            <td style="padding:6px 0;">சாலை அதிபரின் ஒப்பம் : ........................</td>
+          </tr>
+        </table>`;
 
-          doc.setFontSize(9);
-          doc.setFont("helvetica", "normal");
-          doc.text("School Students Season Ticket Application Form", 148, 23, { align: "center" });
-          doc.text("(பாடசாலை மாணவர்களுக்கான பருவ கால சீட்டு விண்ணப்ப படிவம்)", 148, 27, { align: "center" });
+      document.body.appendChild(host);
+      // Give layout a moment
+      await new Promise(r => setTimeout(r, 100));
 
-          doc.setFontSize(8);
-          doc.text("Form No: 2  (படிவ இல 2)", 270, 12);
+      const canvas = await html2canvas(host, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
+      const imgData = canvas.toDataURL("image/png");
 
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(8.5);
-          doc.text("School: Kili/Akkarayan Maha Vidiyalayam", 12, 34);
-          doc.text("Road: Kilinochchi Road", 185, 34);
-
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(8);
-          doc.text("Address: Akkarayankulam, Kilinochchi.", 12, 38.5);
-          doc.text("Grade: G.C.E A/L - Grade 12,13", 12, 43);
-          doc.text(`Season: ${monthLabel}`, 185, 43);
-
-          // ── TABLE ──
-          const tableBody = [];
-          for (let i = 0; i < PAGE_SIZE; i++) {
-            if (i < pageRows.length) {
-              const r = pageRows[i];
-              const st = r.student as any;
-              tableBody.push([
-                page * PAGE_SIZE + i + 1,
-                st.full_name,
-                st.nic ?? "",
-                formatDob(st.dob),
-                st.gender === "male" ? "Boy" : st.gender === "female" ? "Girl" : "",
-                "Kilinochchi",
-                "AMV",
-                "803",
-                "",   // signature
-                "",   // price
-                monthLabel,
-              ]);
-            } else {
-              tableBody.push([page * PAGE_SIZE + i + 1, "", "", "", "", "Kilinochchi", "AMV", "", "", "", ""]);
-            }
-          }
-
-          autoTable(doc, {
-            startY: 46,
-            head: [[
-              "#",
-              "Student Name\n(மாணவர் பெயர்)",
-              "NIC\n(அடையாள அட்டை)",
-              "Date of Birth\n(பிறந்த திகதி)",
-              "Gender\n(ஆண்/பெண்)",
-              "From\n(இருந்து)",
-              "To\n(வரை)",
-              "Route\n(பாதை)",
-              "Signature\n(மாணவர் ஒப்பம்)",
-              "Value\n(பெறுமதி)",
-              "Month\n(மாதம்)",
-            ]],
-            body: tableBody,
-            styles: {
-              fontSize: 7,
-              cellPadding: 1.5,
-              minCellHeight: 5.5,
-              font: "helvetica",
-              valign: "middle",
-              halign: "center",
-              lineColor: [0, 0, 0],
-              lineWidth: 0.25,
-              textColor: [0, 0, 0],
-              fillColor: [255, 255, 255],
-            },
-            headStyles: {
-              fillColor: [220, 230, 250],
-              textColor: [0, 0, 0],
-              fontStyle: "bold",
-              fontSize: 6.5,
-              halign: "center",
-              minCellHeight: 11,
-            },
-            alternateRowStyles: { fillColor: [248, 250, 255] },
-            columnStyles: {
-              0:  { cellWidth: 8,  halign: "center" },
-              1:  { cellWidth: 42, halign: "left" },
-              2:  { cellWidth: 28, halign: "center" },
-              3:  { cellWidth: 18, halign: "center" },
-              4:  { cellWidth: 12, halign: "center" },
-              5:  { cellWidth: 20, halign: "center" },
-              6:  { cellWidth: 13, halign: "center" },
-              7:  { cellWidth: 10, halign: "center" },
-              8:  { cellWidth: 30, halign: "center" },
-              9:  { cellWidth: 13, halign: "center" },
-              10: { cellWidth: 22, halign: "center" },
-            },
-            margin: { left: 8, right: 8 },
-            tableLineColor: [0, 0, 0],
-            tableLineWidth: 0.4,
-          });
-
-          const finalY = (doc as any).lastAutoTable.finalY + 4;
-
-          // ── FOOTER ──
-          doc.setFontSize(7.5);
-          doc.setFont("helvetica", "normal");
-          doc.text(
-            "I hereby certify that the above students are full-time students of this school and are not employed part-time elsewhere, and recommend issuing them season tickets.",
-            10, finalY, { maxWidth: 270 }
-          );
-
-          const sigY = finalY + 10;
-          doc.setLineWidth(0.3);
-          // Line boxes for signatures
-          doc.text("Class Teacher Name: ................................", 10, sigY);
-          doc.text("Issued by: .......................................", 175, sigY);
-          doc.text("Class Teacher Signature: ........................", 10, sigY + 7);
-          doc.text("Registrar Signature: ..................", 90, sigY + 7);
-          doc.text("Date: ................", 175, sigY + 7);
-          doc.text("Issue Date: .......................................", 175, sigY + 14);
-          doc.text("Road Manager Signature: .....................................", 175, sigY + 21);
-
-          // Page number
-          doc.setFontSize(7);
-          doc.setTextColor(100, 100, 100);
-          doc.text(
-            `Page ${page + 1} of ${pages}  |  ${monthLabel}  |  Total: ${rows.length} students  |  Bus Route: 803`,
-            148, 207, { align: "center" }
-          );
-          doc.setTextColor(0, 0, 0);
-        }
-
-        doc.save(`Season_Ticket_${month}.pdf`);
-        toast.success(`PDF downloaded — ${rows.length} students, ${pages} page(s)`);
-      })
-    );
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+      const pdfW = pdf.internal.pageSize.getWidth();   // 297
+      const pdfH = pdf.internal.pageSize.getHeight();  // 210
+      const margin = 5;
+      const availW = pdfW - margin * 2;
+      const ratio = canvas.height / canvas.width;
+      let imgH = availW * ratio;
+      let imgW = availW;
+      if (imgH > pdfH - margin * 2) {
+        imgH = pdfH - margin * 2;
+        imgW = imgH / ratio;
+      }
+      const x = (pdfW - imgW) / 2;
+      pdf.addImage(imgData, "PNG", x, margin, imgW, imgH);
+      pdf.save(`Season_Report_${month}.pdf`);
+      toast.success("PDF downloaded");
+    } catch (e: any) {
+      console.error(e);
+      toast.error("PDF export failed: " + (e?.message ?? "unknown"));
+    } finally {
+      if (host && host.parentNode) host.parentNode.removeChild(host);
+    }
   };
 
   return (
     <div className="space-y-4">
       <div className="glass-card rounded-xl p-5 space-y-4">
         <div className="flex items-center gap-2">
-          <FileSpreadsheet className="w-4 h-4 text-primary" />
-          <h3 className="font-semibold text-foreground">Monthly Payment Report</h3>
+          <Filter className="w-4 h-4 text-primary" />
+          <h3 className="font-semibold text-foreground">Monthly Season Ticket Report (Tamil)</h3>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Month</label>
+            <label className="text-xs text-muted-foreground mb-1 block">Month / தவணை</label>
             <Select value={month} onValueChange={setMonth}>
               <SelectTrigger className="bg-secondary"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -482,11 +338,10 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          இலங்கை போக்குவரத்து சபை - வடக்கு official format — 25 students/page, ஆண்/பெண், signature rows.
+          Excel uses your uploaded template (no layout change). PDF renders A4 landscape with Tamil text — fits on one page, no cut-off. Default route: {DEFAULT_ROUTE}, From: {DEFAULT_FROM}, To: {DEFAULT_TO}. மாணவர் ஒப்பம் & மாதங்கள் columns are intentionally blank.
         </p>
       </div>
 
-      {/* Preview */}
       <div className="glass-card rounded-xl overflow-hidden">
         <div className="p-4 border-b border-border flex justify-between items-center">
           <h4 className="font-semibold text-foreground text-sm">Preview — {monthLabel}</h4>
@@ -498,9 +353,8 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
               <tr className="border-b border-border">
                 <th className="text-left p-3 text-xs uppercase text-muted-foreground">#</th>
                 <th className="text-left p-3 text-xs uppercase text-muted-foreground">Name</th>
-                <th className="text-left p-3 text-xs uppercase text-muted-foreground">ID</th>
+                <th className="text-left p-3 text-xs uppercase text-muted-foreground">NIC</th>
                 <th className="text-left p-3 text-xs uppercase text-muted-foreground hidden md:table-cell">DOB</th>
-                <th className="text-left p-3 text-xs uppercase text-muted-foreground hidden md:table-cell">Gender</th>
                 <th className="text-left p-3 text-xs uppercase text-muted-foreground hidden md:table-cell">Batch/Stream</th>
                 <th className="text-left p-3 text-xs uppercase text-muted-foreground">Status</th>
               </tr>
@@ -510,11 +364,8 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
                 <motion.tr key={r.student.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.01 }} className="border-b border-border/50">
                   <td className="p-3 text-muted-foreground">{i + 1}</td>
                   <td className="p-3 text-foreground font-medium">{r.student.full_name}</td>
-                  <td className="p-3 font-mono text-xs text-muted-foreground">{r.student.auto_id}</td>
-                  <td className="p-3 text-muted-foreground hidden md:table-cell">{formatDob(r.student.dob)}</td>
-                  <td className="p-3 text-muted-foreground hidden md:table-cell">
-                    {(r.student as any).gender === "male" ? "👦 ஆண்" : (r.student as any).gender === "female" ? "👧 பெண்" : "—"}
-                  </td>
+                  <td className="p-3 text-xs text-muted-foreground">{r.student.nic ?? "-"}</td>
+                  <td className="p-3 text-muted-foreground hidden md:table-cell">{r.student.dob ?? "-"}</td>
                   <td className="p-3 text-muted-foreground hidden md:table-cell">{r.student.batch} {r.student.stream}</td>
                   <td className="p-3"><StatusBadge status={r.status} /></td>
                 </motion.tr>
