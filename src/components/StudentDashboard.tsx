@@ -1,8 +1,13 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { User, Phone, MapPin, GraduationCap, Calendar, CreditCard, Megaphone } from "lucide-react";
+import { User, Phone, MapPin, GraduationCap, Calendar, CreditCard, Megaphone, ShieldX, Send } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import LiveClock from "./LiveClock";
 import StudentAvatar from "./StudentAvatar";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import type { Student, Announcement, PaymentHistory } from "@/lib/store";
 
 interface Props {
@@ -11,8 +16,78 @@ interface Props {
   paymentHistory: PaymentHistory[];
 }
 
+const ADMIN_EMAIL = "hiphoptamizhakavi@gmail.com";
+
 export default function StudentDashboard({ student, announcements, paymentHistory }: Props) {
   const studentPayments = paymentHistory.filter(p => p.student_id === student.id);
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  const handleContactRequest = async () => {
+    if (!message.trim()) { toast.error("Message தட்டச்சு பண்ணுங்க"); return; }
+    setSending(true);
+    try {
+      // Send via Supabase Edge Function or email service
+      // Using mailto as fallback — opens email client
+      const subject = encodeURIComponent(`Account Unblock Request - ${student.full_name} (${student.auto_id})`);
+      const body = encodeURIComponent(
+        `Student Name: ${student.full_name}\nStudent ID: ${student.auto_id}\nEmail: ${student.email}\nPhone: ${student.student_phone}\n\nMessage:\n${message}`
+      );
+      window.location.href = `mailto:${ADMIN_EMAIL}?subject=${subject}&body=${body}`;
+      setSent(true);
+      toast.success("Request அனுப்பப்பட்டது!");
+    } catch {
+      toast.error("Error occurred. Try again.");
+    }
+    setSending(false);
+  };
+
+  // Blocked screen
+  if (student.account_status === "blocked") {
+    return (
+      <div className="min-h-screen gradient-hero flex items-center justify-center p-4">
+        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md">
+          <div className="glass-card rounded-2xl p-8 space-y-5 text-center">
+            <div className="w-16 h-16 rounded-full bg-destructive/20 flex items-center justify-center mx-auto">
+              <ShieldX className="w-8 h-8 text-destructive" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-foreground">Account Temporarily Blocked</h2>
+              <p className="text-sm text-muted-foreground mt-2">உங்கள் account தற்காலிகமாக block பண்ணப்பட்டது . Admin-ஐ தொடர்பு கொள்ளுங்க.</p>
+            </div>
+
+            <div className="text-left space-y-3 p-4 rounded-xl bg-secondary">
+              <p className="text-xs font-semibold text-muted-foreground uppercase">Contact Admin</p>
+              <p className="text-sm text-primary font-mono">{ADMIN_EMAIL}</p>
+              <p className="text-xs text-muted-foreground">Student: {student.full_name} ({student.auto_id})</p>
+            </div>
+
+            {!sent ? (
+              <div className="space-y-3 text-left">
+                <p className="text-sm font-medium text-foreground">Unblock Request அனுப்புங்க:</p>
+                <Textarea
+                  placeholder="உங்கள் message இங்கே எழுதுங்க..."
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  className="bg-secondary text-sm"
+                  rows={3}
+                />
+                <Button onClick={handleContactRequest} disabled={sending} className="w-full gradient-primary text-primary-foreground">
+                  <Send className="w-4 h-4 mr-2" />
+                  {sending ? "Sending..." : "Request அனுப்பு"}
+                </Button>
+              </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-success/10 text-success text-sm font-medium">
+                ✓ Request அனுப்பப்பட்டது! Admin reply பண்ணுவாங்க.
+              </div>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto p-4 space-y-6 max-w-3xl">

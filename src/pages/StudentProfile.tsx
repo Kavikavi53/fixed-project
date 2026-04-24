@@ -1,10 +1,9 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { QRCodeSVG } from "qrcode.react";
 import {
   ArrowLeft, User, Phone, MapPin, GraduationCap, Calendar,
-  CreditCard, Trash2, CheckCircle, Mail, IdCard,
+  CreditCard, Trash2, CheckCircle, Mail, IdCard, FileText, Download,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -14,6 +13,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import StatusBadge from "@/components/StatusBadge";
+import StudentAvatar from "@/components/StudentAvatar";
 import type { Student, PaymentHistory, PaymentStatus } from "@/lib/store";
 import { toast } from "sonner";
 
@@ -105,10 +105,13 @@ export default function StudentProfile() {
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card rounded-2xl p-6">
           <div className="flex flex-col sm:flex-row items-center gap-6">
             <div className="flex flex-col items-center gap-3">
-              <div className="w-24 h-24 rounded-2xl gradient-primary flex items-center justify-center text-primary-foreground text-3xl font-bold">
-                {student.full_name.charAt(0)}
-              </div>
-              <QRCodeSVG value={student.auto_id} size={90} bgColor="transparent" fgColor="hsl(var(--foreground))" />
+              <StudentAvatar
+                name={student.full_name}
+                photoUrl={student.profile_photo_url}
+                studentId={student.id}
+                canUpload={false}
+                onUploaded={(url) => setStudent(prev => prev ? { ...prev, profile_photo_url: url } : prev)}
+              />
             </div>
             <div className="flex-1 text-center sm:text-left space-y-2">
               <h1 className="text-2xl font-bold text-foreground">{student.full_name}</h1>
@@ -157,6 +160,43 @@ export default function StudentProfile() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </motion.div>
+
+        {/* Permission Letter */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="glass-card rounded-xl p-5">
+          <h3 className="font-semibold text-foreground flex items-center gap-2 mb-4">
+            <FileText className="w-4 h-4 text-primary" /> Parent Permission Letter
+          </h3>
+          {(student as any).permission_letter_url ? (
+            <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <FileText className="w-4 h-4 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Permission Letter</p>
+                  <p className="text-xs text-muted-foreground">Uploaded during registration</p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  const { data } = await supabase.storage
+                    .from("permission-letters")
+                    .createSignedUrl((student as any).permission_letter_url, 60);
+                  if (data?.signedUrl) window.open(data.signedUrl, "_blank");
+                }}
+              >
+                <Download className="w-4 h-4 mr-1" /> View
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary text-sm text-muted-foreground">
+              <FileText className="w-4 h-4 flex-shrink-0" />
+              <span>No permission letter uploaded</span>
             </div>
           )}
         </motion.div>

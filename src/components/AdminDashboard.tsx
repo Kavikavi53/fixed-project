@@ -4,11 +4,13 @@ import { motion } from "framer-motion";
 import {
   Users, DollarSign, AlertTriangle, CheckCircle, Search,
   Plus, Trash2, ShieldAlert, ShieldCheck, Megaphone, ClipboardList, Pencil, FileDown,
+  FileText, Upload, X,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -17,6 +19,8 @@ import StatusBadge from "./StatusBadge";
 import EditStudentDialog from "./EditStudentDialog";
 import StatsCard from "./StatsCard";
 import ReportsTab from "./ReportsTab";
+import StudentAvatar from "./StudentAvatar";
+import { supabase } from "@/integrations/supabase/client";
 import type { Student, Announcement, AuditEntry, PaymentHistory, PaymentStatus, Batch, Stream } from "@/lib/store";
 
 interface Props {
@@ -72,10 +76,65 @@ export default function AdminDashboard({
     return { total: students.length, paid, pending, late, income: paid * 530 };
   }, [students]);
 
+  const [addError, setAddError] = useState("");
+  const [addLetterFile, setAddLetterFile] = useState<File | null>(null);
+  const isAddLetterRequired = newStudent.batch === "2028" || newStudent.batch === "2029";
+
+  // Confirmation states
+  const [confirmDelete, setConfirmDelete] = useState<Student | null>(null);
+  const [confirmBlock, setConfirmBlock] = useState<Student | null>(null);
+  const [confirmEdit, setConfirmEdit] = useState<Student | null>(null);
+
   const handleAddStudent = async () => {
-    if (!newStudent.full_name || !newStudent.student_phone) return;
-    await onAddStudent(newStudent);
+    if (!newStudent.full_name.trim()) { setAddError("Full name is required"); return; }
+    if (!newStudent.student_phone.trim()) { setAddError("Student phone is required"); return; }
+    if (!newStudent.nic.trim()) { setAddError("NIC is required"); return; }
+    if (!newStudent.dob.trim()) { setAddError("Date of Birth is required"); return; }
+    if (!newStudent.address.trim()) { setAddError("Address is required"); return; }
+    if (!newStudent.school_id.trim()) { setAddError("School ID is required"); return; }
+    if (!newStudent.email.trim()) { setAddError("Email is required"); return; }
+    if (!newStudent.parent_name.trim()) { setAddError("Parent name is required"); return; }
+    if (!newStudent.parent_phone.trim()) { setAddError("Parent phone is required"); return; }
+    if (isAddLetterRequired && !addLetterFile) { setAddError("Permission letter is required for 2028/2029 batch"); return; }
+    setAddError("");
+
+    // Check if email already exists
+    const { data: existing, error: checkError } = await supabase
+      .from("students")
+      .select("id")
+      .ilike("email", newStudent.email.trim())
+      .maybeSingle();
+
+    if (checkError) { setAddError("Error checking email. Try again."); return; }
+    if (existing) { setAddError("இந்த email already registered ஆச்சு!"); return; }
+
+    const result = await onAddStudent(newStudent);
+
+    if (result?.error) {
+      if (result.error.message?.includes("duplicate") || result.error.message?.includes("unique")) {
+        setAddError("இந்த email already registered ஆச்சு!");
+      } else {
+        setAddError("Student add பண்ண முடியல: " + result.error.message);
+      }
+      return;
+    }
+
+    const studentId = result?.data?.id;
+
+    // Upload letter if provided
+    if (addLetterFile && studentId) {
+      const ext = addLetterFile.name.split(".").pop();
+      const fileName = `admin_${studentId}_permission_letter.${ext}`;
+      const { data: uploadData } = await supabase.storage
+        .from("permission-letters")
+        .upload(fileName, addLetterFile, { upsert: true });
+      if (uploadData) {
+        await supabase.from("students").update({ permission_letter_url: uploadData.path }).eq("id", studentId);
+      }
+    }
+
     setAddOpen(false);
+    setAddLetterFile(null);
     setNewStudent({ full_name: "", address: "", dob: "", nic: "", email: "", school_id: "", batch: "2026", stream: "Mathematics", student_phone: "", parent_name: "", parent_phone: "" });
   };
 
@@ -123,6 +182,8 @@ export default function AdminDashboard({
                 <SelectItem value="all">All Batches</SelectItem>
                 <SelectItem value="2026">2026</SelectItem>
                 <SelectItem value="2027">2027</SelectItem>
+                <SelectItem value="2028">2028</SelectItem>
+                <SelectItem value="2029">2029</SelectItem>
               </SelectContent>
             </Select>
             <Select value={streamFilter} onValueChange={setStreamFilter}>
@@ -151,18 +212,23 @@ export default function AdminDashboard({
               <DialogContent className="glass-card border-border max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle>Add New Student</DialogTitle></DialogHeader>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Input placeholder="Full Name *" value={newStudent.full_name} onChange={e => setNewStudent(p => ({ ...p, full_name: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="School ID" value={newStudent.school_id} onChange={e => setNewStudent(p => ({ ...p, school_id: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="NIC" value={newStudent.nic} onChange={e => setNewStudent(p => ({ ...p, nic: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="Email" type="email" value={newStudent.email} onChange={e => setNewStudent(p => ({ ...p, email: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="DOB" type="date" value={newStudent.dob} onChange={e => setNewStudent(p => ({ ...p, dob: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="Address" value={newStudent.address} onChange={e => setNewStudent(p => ({ ...p, address: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="Student Phone *" value={newStudent.student_phone} onChange={e => setNewStudent(p => ({ ...p, student_phone: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="Parent Name" value={newStudent.parent_name} onChange={e => setNewStudent(p => ({ ...p, parent_name: e.target.value }))} className="bg-secondary" />
-                  <Input placeholder="Parent Phone" value={newStudent.parent_phone} onChange={e => setNewStudent(p => ({ ...p, parent_phone: e.target.value }))} className="bg-secondary" />
+                  <Input placeholder="Full Name *" value={newStudent.full_name} onChange={e => { setNewStudent(p => ({ ...p, full_name: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="School ID *" value={newStudent.school_id} onChange={e => { setNewStudent(p => ({ ...p, school_id: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="NIC *" value={newStudent.nic} onChange={e => { setNewStudent(p => ({ ...p, nic: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="Email *" type="email" value={newStudent.email} onChange={e => { setNewStudent(p => ({ ...p, email: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="DOB *" type="date" value={newStudent.dob} onChange={e => { setNewStudent(p => ({ ...p, dob: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="Address *" value={newStudent.address} onChange={e => { setNewStudent(p => ({ ...p, address: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="Student Phone *" value={newStudent.student_phone} onChange={e => { setNewStudent(p => ({ ...p, student_phone: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="Parent Name *" value={newStudent.parent_name} onChange={e => { setNewStudent(p => ({ ...p, parent_name: e.target.value })); setAddError(""); }} className="bg-secondary" />
+                  <Input placeholder="Parent Phone *" value={newStudent.parent_phone} onChange={e => { setNewStudent(p => ({ ...p, parent_phone: e.target.value })); setAddError(""); }} className="bg-secondary" />
                   <Select value={newStudent.batch} onValueChange={v => setNewStudent(p => ({ ...p, batch: v as Batch }))}>
                     <SelectTrigger className="bg-secondary"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="2026">2026</SelectItem><SelectItem value="2027">2027</SelectItem></SelectContent>
+                    <SelectContent>
+                      <SelectItem value="2026">2026</SelectItem>
+                      <SelectItem value="2027">2027</SelectItem>
+                      <SelectItem value="2028">2028</SelectItem>
+                      <SelectItem value="2029">2029</SelectItem>
+                    </SelectContent>
                   </Select>
                   <Select value={newStudent.stream} onValueChange={v => setNewStudent(p => ({ ...p, stream: v as Stream }))}>
                     <SelectTrigger className="bg-secondary"><SelectValue /></SelectTrigger>
@@ -174,6 +240,35 @@ export default function AdminDashboard({
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Permission Letter Upload */}
+                <div className={`mt-2 rounded-xl border-2 border-dashed p-4 text-center space-y-2 ${isAddLetterRequired ? "border-primary/50" : "border-border"}`}>
+                  <div className="flex items-center gap-2 justify-center">
+                    <FileText className="w-4 h-4 text-primary" />
+                    <p className="text-sm font-medium text-foreground">
+                      Permission Letter {isAddLetterRequired ? <span className="text-destructive">*</span> : <span className="text-xs text-muted-foreground">(Optional)</span>}
+                    </p>
+                  </div>
+                  {addLetterFile ? (
+                    <div className="flex items-center gap-2 bg-secondary rounded-lg px-3 py-2 text-sm">
+                      <FileText className="w-4 h-4 text-primary flex-shrink-0" />
+                      <span className="flex-1 truncate text-foreground text-left">{addLetterFile.name}</span>
+                      <button type="button" onClick={() => setAddLetterFile(null)} className="text-muted-foreground hover:text-destructive">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="cursor-pointer">
+                      <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) { setAddLetterFile(f); setAddError(""); } }} />
+                      <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-sm font-medium transition-colors">
+                        <Upload className="w-4 h-4" /> Choose File
+                      </div>
+                    </label>
+                  )}
+                </div>
+
+                {addError && <p className="text-sm text-destructive mt-1">{addError}</p>}
                 <Button onClick={handleAddStudent} className="w-full gradient-primary text-primary-foreground mt-2">Add Student</Button>
               </DialogContent>
             </Dialog>
@@ -203,7 +298,12 @@ export default function AdminDashboard({
                       className="border-b border-border/50 hover:bg-secondary/30 transition-colors"
                     >
                       <td className="p-3 font-mono text-xs text-muted-foreground">{s.auto_id}</td>
-                      <td className="p-3 font-medium text-foreground cursor-pointer hover:text-primary transition-colors" onClick={() => navigate(`/student/${s.id}`)}>{s.full_name}</td>
+                      <td className="p-3 cursor-pointer hover:text-primary transition-colors" onClick={() => navigate(`/student/${s.id}`)}>
+                        <div className="flex items-center gap-2">
+                          <StudentAvatar name={s.full_name} photoUrl={s.profile_photo_url} studentId={s.id} canUpload={false} size="sm" />
+                          <span className="font-medium text-foreground">{s.full_name}</span>
+                        </div>
+                      </td>
                       <td className="p-3 text-muted-foreground hidden md:table-cell">{s.batch}</td>
                       <td className="p-3 text-muted-foreground hidden md:table-cell">{s.stream}</td>
                       <td className="p-3"><StatusBadge status={s.payment_status} /></td>
@@ -222,13 +322,13 @@ export default function AdminDashboard({
                               <SelectItem value="late">Late</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditStudent(s)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setConfirmEdit(s)}>
                             <Pencil className="w-3.5 h-3.5 text-primary" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onToggleBlock(s.id)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setConfirmBlock(s)}>
                             {s.account_status === "active" ? <ShieldAlert className="w-3.5 h-3.5 text-warning" /> : <ShieldCheck className="w-3.5 h-3.5 text-success" />}
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => onDeleteStudent(s.id)}>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => setConfirmDelete(s)}>
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
                         </div>
@@ -302,6 +402,53 @@ export default function AdminDashboard({
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Edit Confirmation */}
+      <AlertDialog open={!!confirmEdit} onOpenChange={o => { if (!o) setConfirmEdit(null); }}>
+        <AlertDialogContent className="glass-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Edit Student?</AlertDialogTitle>
+            <AlertDialogDescription>{confirmEdit?.full_name} — details edit பண்ணவா?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { setEditStudent(confirmEdit); setConfirmEdit(null); }} className="gradient-primary text-primary-foreground">Edit</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Block Confirmation */}
+      <AlertDialog open={!!confirmBlock} onOpenChange={o => { if (!o) setConfirmBlock(null); }}>
+        <AlertDialogContent className="glass-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmBlock?.account_status === "active" ? "Block Student?" : "Unblock Student?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmBlock?.full_name} — {confirmBlock?.account_status === "active" ? "இந்த student-ஐ block பண்ணவா? Dashboard access போகும்." : "இந்த student-ஐ unblock பண்ணவா?"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { onToggleBlock(confirmBlock!.id); setConfirmBlock(null); }} className={confirmBlock?.account_status === "active" ? "bg-warning text-warning-foreground" : "bg-success text-success-foreground"}>
+              {confirmBlock?.account_status === "active" ? "Block" : "Unblock"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={!!confirmDelete} onOpenChange={o => { if (!o) setConfirmDelete(null); }}>
+        <AlertDialogContent className="glass-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Student?</AlertDialogTitle>
+            <AlertDialogDescription>{confirmDelete?.full_name} — இந்த student-ஐ permanently delete பண்ணவா? Undo முடியாது!</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { onDeleteStudent(confirmDelete!.id); setConfirmDelete(null); }} className="bg-destructive text-destructive-foreground">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <EditStudentDialog student={editStudent} open={!!editStudent} onOpenChange={open => { if (!open) setEditStudent(null); }} onSave={onUpdateStudent} />
     </div>
   );

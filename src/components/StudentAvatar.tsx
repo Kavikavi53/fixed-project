@@ -8,15 +8,17 @@ interface Props {
   photoUrl: string | null;
   studentId: string;
   canUpload?: boolean;
+  size?: "sm" | "md";
   onUploaded?: (url: string) => void;
 }
 
-export default function StudentAvatar({ name, photoUrl, studentId, canUpload = false, onUploaded }: Props) {
+export default function StudentAvatar({ name, photoUrl, studentId, canUpload = false, size = "md", onUploaded }: Props) {
   const [uploading, setUploading] = useState(false);
   const [imgError, setImgError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const showImage = photoUrl && !imgError;
+  const sizeClass = size === "sm" ? "w-8 h-8 text-sm" : "w-24 h-24 text-3xl";
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -59,7 +61,7 @@ export default function StudentAvatar({ name, photoUrl, studentId, canUpload = f
 
   return (
     <div className="relative group">
-      <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-primary/30 flex-shrink-0">
+      <div className={`${sizeClass} rounded-full overflow-hidden border-2 border-primary/30 flex-shrink-0`}>
         {showImage ? (
           <img
             src={photoUrl}
@@ -68,7 +70,7 @@ export default function StudentAvatar({ name, photoUrl, studentId, canUpload = f
             onError={() => setImgError(true)}
           />
         ) : (
-          <div className="w-full h-full gradient-primary flex items-center justify-center text-primary-foreground text-3xl font-bold">
+          <div className={`w-full h-full gradient-primary flex items-center justify-center text-primary-foreground font-bold`}>
             {name.charAt(0).toUpperCase()}
           </div>
         )}

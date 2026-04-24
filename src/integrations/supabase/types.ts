@@ -118,6 +118,7 @@ export type Database = {
           parent_name: string | null
           parent_phone: string | null
           payment_status: Database["public"]["Enums"]["payment_status"]
+          permission_letter_url: string | null
           profile_photo_url: string | null
           school_id: string | null
           stream: Database["public"]["Enums"]["student_stream"]
@@ -139,6 +140,7 @@ export type Database = {
           parent_name?: string | null
           parent_phone?: string | null
           payment_status?: Database["public"]["Enums"]["payment_status"]
+          permission_letter_url?: string | null
           profile_photo_url?: string | null
           school_id?: string | null
           stream?: Database["public"]["Enums"]["student_stream"]
@@ -160,6 +162,7 @@ export type Database = {
           parent_name?: string | null
           parent_phone?: string | null
           payment_status?: Database["public"]["Enums"]["payment_status"]
+          permission_letter_url?: string | null
           profile_photo_url?: string | null
           school_id?: string | null
           stream?: Database["public"]["Enums"]["student_stream"]
