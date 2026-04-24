@@ -23,6 +23,7 @@ export default function SignUpPage({ onBack }: Props) {
     password: "",
     confirmPassword: "",
     full_name: "",
+    gender: "",
     address: "",
     dob: "",
     nic: "",
@@ -80,6 +81,7 @@ export default function SignUpPage({ onBack }: Props) {
 
   const validateStep2 = () => {
     if (!form.full_name.trim()) { setError("Full name is required"); return false; }
+    if (!form.gender) { setError("Gender is required"); return false; }
     if (!form.student_phone.trim()) { setError("Student phone is required"); return false; }
     if (!form.nic.trim()) { setError("NIC is required"); return false; }
     if (!form.dob.trim()) { setError("Date of Birth is required"); return false; }
@@ -116,6 +118,7 @@ export default function SignUpPage({ onBack }: Props) {
         options: {
           data: {
             full_name: form.full_name,
+            gender: form.gender || null,
             address: form.address || null,
             dob: form.dob || null,
             nic: form.nic || null,
@@ -255,6 +258,25 @@ export default function SignUpPage({ onBack }: Props) {
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input placeholder="Full Name *" value={form.full_name} onChange={e => set("full_name", e.target.value)} className="pl-10 h-11 bg-secondary" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Gender *</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => set("gender", "male")}
+                        className={`h-11 rounded-lg border-2 text-sm font-medium transition-all flex items-center justify-center gap-2 ${form.gender === "male" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground hover:border-primary/50"}`}
+                      >
+                        <span>👦</span> ஆண் (Male)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => set("gender", "female")}
+                        className={`h-11 rounded-lg border-2 text-sm font-medium transition-all flex items-center justify-center gap-2 ${form.gender === "female" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-muted-foreground hover:border-primary/50"}`}
+                      >
+                        <span>👧</span> பெண் (Female)
+                      </button>
+                    </div>
                   </div>
                   <div className="relative">
                     <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

@@ -113,6 +113,7 @@ export type Database = {
           dob: string | null
           email: string | null
           full_name: string
+          gender: string | null
           id: string
           nic: string | null
           parent_name: string | null
@@ -135,6 +136,7 @@ export type Database = {
           dob?: string | null
           email?: string | null
           full_name: string
+          gender?: string | null
           id?: string
           nic?: string | null
           parent_name?: string | null
@@ -157,6 +159,7 @@ export type Database = {
           dob?: string | null
           email?: string | null
           full_name?: string
+          gender?: string | null
           id?: string
           nic?: string | null
           parent_name?: string | null
