@@ -53,10 +53,16 @@ export default function AdminDashboard({
   const [annUrgent, setAnnUrgent] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editStudent, setEditStudent] = useState<Student | null>(null);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const [newStudent, setNewStudent] = useState({
     full_name: "", address: "", dob: "", nic: "", email: "",
     school_id: "", batch: "2026" as Batch, stream: "Mathematics" as Stream,
     student_phone: "", parent_name: "", parent_phone: "",
+  });
+
+  // Get current admin email
+  useState(() => {
+    supabase.auth.getUser().then(({ data }) => setAdminEmail(data.user?.email ?? null));
   });
 
   const filtered = useMemo(() => {
@@ -76,6 +82,12 @@ export default function AdminDashboard({
     return { total: students.length, paid, pending, late, income: paid * 530 };
   }, [students]);
 
+  // Your stats — payments marked by this admin
+  const yourStats = useMemo(() => {
+    const myStudents = students.filter(s => (s as any).payment_marked_by === adminEmail && s.payment_status === "paid");
+    return { paid: myStudents.length, income: myStudents.length * 530 };
+  }, [students, adminEmail]);
+
   const [addError, setAddError] = useState("");
   const [addLetterFile, setAddLetterFile] = useState<File | null>(null);
   const isAddLetterRequired = newStudent.batch === "2028" || newStudent.batch === "2029";
@@ -84,6 +96,7 @@ export default function AdminDashboard({
   const [confirmDelete, setConfirmDelete] = useState<Student | null>(null);
   const [confirmBlock, setConfirmBlock] = useState<Student | null>(null);
   const [confirmEdit, setConfirmEdit] = useState<Student | null>(null);
+  const [confirmPayment, setConfirmPayment] = useState<{ student: Student; status: PaymentStatus } | null>(null);
 
   const handleAddStudent = async () => {
     if (!newStudent.full_name.trim()) { setAddError("Full name is required"); return; }
@@ -160,6 +173,22 @@ export default function AdminDashboard({
         <StatsCard title="Pending" value={stats.pending} icon={AlertTriangle} variant="destructive" delay={0.1} />
         <StatsCard title="Late" value={stats.late} icon={AlertTriangle} variant="warning" delay={0.15} />
         <StatsCard title="Income" value={`Rs. ${stats.income.toLocaleString()}`} icon={DollarSign} delay={0.2} />
+
+        {/* Your Collections */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
+          className="col-span-2 glass-card rounded-xl px-5 py-3 flex items-center gap-3 border border-primary/20">
+          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-base">👤</div>
+          <div className="flex-1">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+              Your Collections {adminEmail && <span className="normal-case ml-1 text-primary">— {adminEmail}</span>}
+            </p>
+            <p className="text-sm font-semibold text-foreground mt-0.5">
+              Paid: <span className="text-green-500">{yourStats.paid}</span>
+              <span className="mx-2 text-muted-foreground">|</span>
+              Income: <span className="text-primary">Rs. {yourStats.income.toLocaleString()}</span>
+            </p>
+          </div>
+        </motion.div>
       </div>
 
       <Tabs defaultValue="students" className="space-y-4">
@@ -314,7 +343,7 @@ export default function AdminDashboard({
                       </td>
                       <td className="p-3">
                         <div className="flex items-center justify-end gap-1">
-                          <Select value={s.payment_status} onValueChange={v => onUpdatePayment(s.id, v as PaymentStatus)}>
+                          <Select value={s.payment_status} onValueChange={v => setConfirmPayment({ student: s, status: v as PaymentStatus })}>
                             <SelectTrigger className="h-7 w-20 text-xs bg-secondary"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="paid">Paid</SelectItem>
@@ -402,6 +431,29 @@ export default function AdminDashboard({
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Payment Confirmation */}
+      <AlertDialog open={!!confirmPayment} onOpenChange={o => { if (!o) setConfirmPayment(null); }}>
+        <AlertDialogContent className="glass-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Payment Status மாத்தவா?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-semibold text-foreground">{confirmPayment?.student.full_name}</span> — payment status{" "}
+              <span className={`font-semibold ${confirmPayment?.status === "paid" ? "text-green-500" : confirmPayment?.status === "late" ? "text-warning" : "text-destructive"}`}>
+                {confirmPayment?.status?.toUpperCase()}
+              </span> ஆக மாத்தவா?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { onUpdatePayment(confirmPayment!.student.id, confirmPayment!.status); setConfirmPayment(null); }}
+              className="gradient-primary text-primary-foreground">
+              OK, மாத்து
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit Confirmation */}
       <AlertDialog open={!!confirmEdit} onOpenChange={o => { if (!o) setConfirmEdit(null); }}>

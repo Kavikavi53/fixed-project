@@ -7,7 +7,7 @@ export type PaymentHistory = Tables<"payment_history">;
 export type Announcement = Tables<"announcements">;
 export type AuditEntry = Tables<"audit_log">;
 export type PaymentStatus = "paid" | "pending" | "late";
-export type Batch = "2026" | "2027";
+export type Batch = "2026" | "2027" | "2028" | "2029";
 export type Stream = "Arts" | "Commerce" | "Bio Science" | "Mathematics";
 export type UserRole = "admin" | "student";
 export type RealtimeStatus = "connecting" | "live" | "offline";
@@ -111,10 +111,18 @@ export function useStore() {
   }, []);
 
   const updatePaymentStatus = useCallback(async (id: string, status: PaymentStatus) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const adminEmail = user?.email ?? null;
     // Optimistic update — instant UI
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: status } : s));
-    const { error } = await supabase.from("students").update({ payment_status: status }).eq("id", id);
-    if (!error) await addAudit("Payment Update", `Student ${id} → ${status}`);
+    setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: status, payment_marked_by: adminEmail } : s));
+    const { error } = await supabase.from("students").update({ payment_status: status, payment_marked_by: adminEmail } as any).eq("id", id);
+    if (!error) {
+      // Update payment_history with marked_by_admin
+      await supabase.from("payment_history").update({ marked_by_admin: adminEmail } as any)
+        .eq("student_id", id)
+        .eq("month", new Date().toISOString().slice(0, 7));
+      await addAudit("Payment Update", `Student ${id} → ${status}`);
+    }
   }, [addAudit]);
 
   const addStudent = useCallback(async (student: {

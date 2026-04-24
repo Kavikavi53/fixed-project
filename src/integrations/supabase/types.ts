@@ -70,6 +70,7 @@ export type Database = {
           amount: number
           created_at: string
           id: string
+          marked_by_admin: string | null
           month: string
           paid_date: string | null
           status: Database["public"]["Enums"]["payment_status"]
@@ -79,6 +80,7 @@ export type Database = {
           amount?: number
           created_at?: string
           id?: string
+          marked_by_admin?: string | null
           month: string
           paid_date?: string | null
           status?: Database["public"]["Enums"]["payment_status"]
@@ -88,6 +90,7 @@ export type Database = {
           amount?: number
           created_at?: string
           id?: string
+          marked_by_admin?: string | null
           month?: string
           paid_date?: string | null
           status?: Database["public"]["Enums"]["payment_status"]
@@ -119,6 +122,7 @@ export type Database = {
           parent_name: string | null
           parent_phone: string | null
           payment_status: Database["public"]["Enums"]["payment_status"]
+          payment_marked_by: string | null
           permission_letter_url: string | null
           profile_photo_url: string | null
           school_id: string | null
