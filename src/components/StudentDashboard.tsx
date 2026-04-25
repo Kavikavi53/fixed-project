@@ -51,8 +51,8 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
     },
     {
       icon: Smartphone,
-      label: t(lang, "All Payment Methods", "அனைத்து கட்டண முறைகள்"),
-      sub: t(lang, "UPI, Card, Net Banking & more", "UPI, Card, Net Banking மற்றும் பலவற்றை"),
+      label: t(lang, "Sri Lanka Payment Methods", "இலங்கை கட்டண முறைகள்"),
+      sub: t(lang, "Visa · Mastercard · Bank Transfer · Lanka QR", "Visa · Mastercard · வங்கி பரிமாற்றம் · Lanka QR"),
     },
   ];
 
@@ -81,7 +81,7 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
             </div>
 
             {/* Gradient header */}
-            <div className="relative gradient-primary px-6 pt-6 pb-10 overflow-hidden">
+            <div className="relative gradient-primary px-6 pt-6 pb-6 overflow-hidden">
               <div
                 className="absolute inset-0 opacity-20"
                 style={{ backgroundImage: "radial-gradient(circle at 80% 20%, white 0%, transparent 60%)" }}
@@ -94,7 +94,7 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
               </button>
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center">
-                  <Smartphone className="w-6 h-6 text-white" />
+                  <CreditCard className="w-6 h-6 text-white" />
                 </div>
                 <div>
                   <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest">Feature Preview</p>
@@ -112,11 +112,28 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
               </p>
             </div>
 
-            {/* Coming soon badge — overlaps header bottom */}
-            <div className="flex justify-center -mt-4 mb-3">
+            {/* Coming soon badge — cleanly below header */}
+            <div className="flex justify-center pt-3 pb-3">
               <span className="bg-amber-500 text-white text-[11px] font-black uppercase tracking-widest px-5 py-1.5 rounded-full shadow-lg">
                 ✦ {t(lang, "Coming Soon", "விரைவில் வருகிறது")} ✦
               </span>
+            </div>
+
+            {/* Sri Lanka card logos */}
+            <div className="mx-5 mb-3 p-3 rounded-2xl bg-secondary/60 flex items-center justify-center gap-3">
+              <div className="flex items-center justify-center bg-white rounded-lg px-2.5 py-1.5 shadow-sm">
+                <span className="text-[#1A1F71] font-black text-sm tracking-tight italic">VISA</span>
+              </div>
+              <div className="flex items-center justify-center bg-white rounded-lg px-2 py-1.5 shadow-sm gap-0.5">
+                <div className="w-5 h-5 rounded-full bg-red-500 opacity-90" />
+                <div className="w-5 h-5 rounded-full bg-yellow-400 opacity-90 -ml-2.5" />
+              </div>
+              <div className="flex items-center justify-center bg-white rounded-lg px-2.5 py-1.5 shadow-sm">
+                <span className="text-[#0066CC] font-black text-[10px] tracking-tight">Lanka QR</span>
+              </div>
+              <div className="flex items-center justify-center bg-white rounded-lg px-2.5 py-1.5 shadow-sm">
+                <span className="text-gray-700 font-bold text-[10px]">Bank</span>
+              </div>
             </div>
 
             {/* Features */}
@@ -138,7 +155,7 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
             {/* Disabled CTA */}
             <div className="px-5 pt-3 pb-6">
               <div className="w-full h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center gap-2 cursor-not-allowed select-none">
-                <Smartphone className="w-4 h-4 text-primary" />
+                <CreditCard className="w-4 h-4 text-primary" />
                 <span className="text-sm font-semibold text-primary">
                   {t(lang, "Pay Now", "இப்போது செலுத்து")}
                 </span>
@@ -288,30 +305,37 @@ export default function StudentDashboard({ student, announcements, paymentHistor
         animate={{ opacity: 1, y: 0 }}
         className="glass-card rounded-3xl overflow-hidden"
       >
-        <div className="h-16 gradient-primary opacity-30" />
-        <div className="px-4 pb-4 -mt-8">
-          <div className="flex items-end gap-3">
-            <div className="ring-4 ring-background rounded-full flex-shrink-0">
-              <StudentAvatar
-                name={student.full_name}
-                photoUrl={student.profile_photo_url}
-                studentId={student.id}
-                canUpload={true}
-              />
-            </div>
-            <div className="pb-1 min-w-0 flex-1">
-              {/* ✅ FIX 1 — full name, no truncate */}
-              <h2 className="text-base font-bold text-foreground leading-snug break-words">{student.full_name}</h2>
-              <p className="text-xs font-mono text-primary">{student.auto_id}</p>
-            </div>
-            <div className="pb-1 flex-shrink-0">
-              <LiveClock />
-            </div>
+        {/* Blue banner — clock & date only */}
+        <div className="gradient-primary px-4 py-3 flex items-center justify-between">
+          <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest">A.M.V Season Tickets</p>
+          <LiveClock />
+        </div>
+
+        {/* Below banner — avatar + name + id + badges */}
+        <div className="px-4 py-3 flex items-center gap-3">
+          <div className="flex-shrink-0">
+            <StudentAvatar
+              name={student.full_name}
+              photoUrl={student.profile_photo_url}
+              studentId={student.id}
+              canUpload={true}
+            />
           </div>
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            <span className="text-[11px] bg-secondary px-2.5 py-1 rounded-full text-secondary-foreground font-medium">{student.batch}</span>
-            <span className="text-[11px] bg-secondary px-2.5 py-1 rounded-full text-secondary-foreground font-medium">{student.stream}</span>
-            <StatusBadge status={student.payment_status} />
+          <div className="min-w-0 flex-1">
+            <h2
+              className="font-bold text-foreground leading-snug"
+              style={{
+                fontSize: student.full_name.length > 20 ? "0.82rem" : student.full_name.length > 15 ? "0.92rem" : "1rem",
+                whiteSpace: "nowrap",
+                overflow: "visible",
+              }}
+            >{student.full_name}</h2>
+            <p className="text-xs font-mono text-primary mt-0.5">{student.auto_id}</p>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              <span className="text-[11px] bg-secondary px-2.5 py-1 rounded-full text-secondary-foreground font-medium">{student.batch}</span>
+              <span className="text-[11px] bg-secondary px-2.5 py-1 rounded-full text-secondary-foreground font-medium">{student.stream}</span>
+              <StatusBadge status={student.payment_status} />
+            </div>
           </div>
         </div>
       </motion.div>
@@ -460,7 +484,7 @@ export default function StudentDashboard({ student, announcements, paymentHistor
           {/* Gradient icon with badge */}
           <div className="relative flex-shrink-0">
             <div className="w-12 h-12 rounded-2xl gradient-primary flex items-center justify-center shadow-md group-hover:shadow-primary/25 transition-shadow">
-              <Smartphone className="w-6 h-6 text-primary-foreground" />
+              <CreditCard className="w-6 h-6 text-primary-foreground" />
             </div>
             <div className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center border-2 border-background shadow-sm">
               <span className="text-white text-[8px] font-black leading-none">!</span>
@@ -478,7 +502,7 @@ export default function StudentDashboard({ student, announcements, paymentHistor
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {t(lang, "UPI · Card · Net Banking · Instant", "UPI · Card · Net Banking · உடனடி")}
+              {t(lang, "Visa · Mastercard · Lanka QR · Bank Transfer", "Visa · Mastercard · Lanka QR · வங்கி பரிமாற்றம்")}
             </p>
           </div>
 
