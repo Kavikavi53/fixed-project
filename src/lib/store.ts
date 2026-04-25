@@ -19,7 +19,39 @@ export interface AppUser {
   studentId?: string;
 }
 
-// Generic payload merger — applies INSERT/UPDATE/DELETE events directly without refetch
+// ─── AUTO PAYMENT LOGIC (Admin login-ல trigger ஆகும்) ────────────────────────
+// pg_cron ஒவ்வொரு மாதமும் automatic run ஆகும்.
+// Client-side இது backup-ஆ run ஆகும் — session-ல் ஒரே ஒரு தடவை மட்டும்.
+export async function runAutoPaymentLogic(isAdmin: boolean) {
+  if (!isAdmin) return;
+
+  const today = new Date().getDate();
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const key = `amv_pay_auto_${currentMonth}_d${today}`;
+  if (sessionStorage.getItem(key)) return; // இந்த session-ல் already run ஆச்சு
+  sessionStorage.setItem(key, "1");
+
+  try {
+    if (today === 1) {
+      // 1ம் தேதி: எல்லா students-ம் pending
+      await (supabase.rpc as any)("auto_set_pending_start_of_month");
+    } else if (today === 20) {
+      // 20ம் தேதி: unpaid students → late
+      await (supabase.rpc as any)("auto_set_late_on_20th");
+    } else if (today === 26) {
+      // 26ம் தேதி: எல்லாரும் pending reset (next month cycle)
+      await (supabase.rpc as any)("auto_reset_on_26th");
+    } else if (today > 20 && today < 26) {
+      // 21-25: unpaid இன்னும் late-ஆ இருக்கணும்
+      await (supabase.rpc as any)("auto_set_late_on_20th");
+    }
+  } catch (e) {
+    // pg_cron functions இல்லாட்டா silently ignore
+    console.warn("[AMV] Auto payment RPC not ready:", e);
+  }
+}
+
+// Generic realtime payload merger
 function applyChange<T extends { id: string; created_at?: string }>(
   prev: T[],
   payload: { eventType: "INSERT" | "UPDATE" | "DELETE"; new: any; old: any },
@@ -91,7 +123,6 @@ export function useStore() {
 
     channelRef.current = channel;
 
-    // Re-sync when tab becomes visible again (handles offline → online)
     const onVisibility = () => {
       if (document.visibilityState === "visible") fetchAll();
     };
@@ -113,14 +144,19 @@ export function useStore() {
   const updatePaymentStatus = useCallback(async (id: string, status: PaymentStatus) => {
     const { data: { user } } = await supabase.auth.getUser();
     const adminEmail = user?.email ?? null;
-    // Optimistic update — instant UI
+    const currentMonth = new Date().toISOString().slice(0, 7);
     setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: status, payment_marked_by: adminEmail } : s));
     const { error } = await supabase.from("students").update({ payment_status: status, payment_marked_by: adminEmail } as any).eq("id", id);
     if (!error) {
-      // Update payment_history with marked_by_admin
-      await supabase.from("payment_history").update({ marked_by_admin: adminEmail } as any)
-        .eq("student_id", id)
-        .eq("month", new Date().toISOString().slice(0, 7));
+      const paidDate = status === "paid" ? new Date().toISOString() : null;
+      await supabase.from("payment_history").upsert({
+        student_id: id,
+        month: currentMonth,
+        status,
+        amount: 530,
+        paid_date: paidDate,
+        marked_by_admin: status === "paid" ? adminEmail : null,
+      } as any, { onConflict: "student_id,month" });
       await addAudit("Payment Update", `Student ${id} → ${status}`);
     }
   }, [addAudit]);
@@ -134,13 +170,21 @@ export function useStore() {
       ...student,
       auto_id: "",
     } as TablesInsert<"students">).select().single();
-    if (data) await addAudit("Student Added", `${data.full_name} (${data.auto_id})`);
+    if (data) {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      await supabase.from("payment_history").upsert({
+        student_id: data.id,
+        month: currentMonth,
+        status: "pending",
+        amount: 530,
+      } as any, { onConflict: "student_id,month" });
+      await addAudit("Student Added", `${data.full_name} (${data.auto_id})`);
+    }
     return { data, error };
   }, [addAudit]);
 
   const deleteStudent = useCallback(async (id: string) => {
     const student = students.find(s => s.id === id);
-    // Optimistic remove
     setStudents(prev => prev.filter(s => s.id !== id));
     await supabase.from("students").delete().eq("id", id);
     if (student) await addAudit("Student Deleted", `${student.full_name} (${student.auto_id})`);

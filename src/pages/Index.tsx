@@ -1,6 +1,6 @@
- import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
-import { useStore } from "@/lib/store";
+import { useStore, runAutoPaymentLogic } from "@/lib/store";
 import AccessCodePage from "@/components/AccessCodePage";
 import LoginPage from "@/components/LoginPage";
 import SignUpPage from "@/components/SignUpPage";
@@ -14,6 +14,17 @@ export default function Index() {
   const store = useStore();
   const [showSignUp, setShowSignUp] = useState(false);
   const [lang, setLang] = useState<"en" | "ta">("en");
+
+  // Admin login ஆனவுடன் auto payment logic trigger
+  useEffect(() => {
+    if (user?.role === "admin") {
+      runAutoPaymentLogic(true).then(() => {
+        // Logic run ஆன பிறகு data refresh
+        setTimeout(() => store.fetchAll(), 1000);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.role]);
 
   if (!accessGranted) return <AccessCodePage onVerify={verifyAccessCode} lang={lang} />;
 
