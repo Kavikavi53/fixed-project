@@ -164,7 +164,7 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
         <th style="${BH}padding:5px 2px;font-size:9.5px;text-align:center;">பயணம்<br/>செய்யுமிடம்</th>
         <th style="${BH}padding:5px 2px;font-size:9.5px;text-align:center;">பாதை<br/>இல</th>
         <th style="${BH}padding:5px 2px;font-size:9.5px;text-align:center;">மாணவர்<br/>ஒப்பம்</th>
-        <th style="${BH}padding:5px 2px;font-size:9.5px;text-align:center;">பெறு<br/>மதி</th>
+        <th style="${BH}padding:5px 2px;font-size:9.5px;text-align:center;">பெறுமதி</th>
         <th style="${BH}padding:5px 2px;font-size:9px;text-align:center;" colspan="3">காரியாலய பாவிப்புக்கு மட்டும்<br/>வழங்கப்பட்ட மாதங்கள்</th>
       </tr>
     </thead>`;
@@ -204,7 +204,7 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
       <table style="width:100%;font-size:11px;margin-bottom:8px;border-collapse:collapse;">
         <tr>
           <td style="width:55%;padding:1px 0;">பெயர் :- கிளி/அக்கராயன் மகா வித்தியாலயம்</td>
-          <td style="padding:1px 0;">வழங்கும் சாலை : கிளிநொச்சி சாலை</td>
+          <td style="padding:1px 0;">                                  வழங்கும் சாலை : கிளிநொச்சி சாலை</td>
         </tr>
         <tr>
           <td style="padding:1px 0;">விலாசம் :- அக்கராயன்குளம், கிளிநொச்சி.</td>
