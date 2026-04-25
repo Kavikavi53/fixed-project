@@ -1,4 +1,4 @@
-import { useState } from "react";
+ import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useStore } from "@/lib/store";
 import AccessCodePage from "@/components/AccessCodePage";
@@ -15,7 +15,7 @@ export default function Index() {
   const [showSignUp, setShowSignUp] = useState(false);
   const [lang, setLang] = useState<"en" | "ta">("en");
 
-  if (!accessGranted) return <AccessCodePage onVerify={verifyAccessCode} />;
+  if (!accessGranted) return <AccessCodePage onVerify={verifyAccessCode} lang={lang} />;
 
   if (authLoading) {
     return (
@@ -27,10 +27,9 @@ export default function Index() {
 
   if (!user) {
     if (showSignUp) return <SignUpPage onBack={() => setShowSignUp(false)} />;
-    return <LoginPage onLogin={login} onSignUp={() => setShowSignUp(true)} />;
+    return <LoginPage onLogin={login} onSignUp={() => setShowSignUp(true)} lang={lang} />;
   }
 
-  // Find student by studentId first, then fallback to email match (handles slight delay after signup)
   const currentStudent = user.studentId
     ? store.students.find(s => s.id === user.studentId)
     : store.students.find(s => s.email === user.email);
@@ -60,20 +59,23 @@ export default function Index() {
             onAddStudent={store.addStudent}
             onUpdateStudent={store.updateStudent}
             paymentHistory={store.paymentHistory}
+            lang={lang}
           />
         ) : store.loading ? (
           <div className="min-h-screen gradient-hero flex items-center justify-center">
             <div className="w-10 h-10 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
         ) : currentStudent ? (
-          <StudentDashboard student={currentStudent} announcements={store.announcements} paymentHistory={store.paymentHistory} lang={lang} />
+          <StudentDashboard
+            student={currentStudent}
+            announcements={store.announcements}
+            paymentHistory={store.paymentHistory}
+            lang={lang}
+          />
         ) : (
-          <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
-            <p>{lang === "en" ? "Setting up your profile... Please wait." : "உங்கள் profile தயாராகிறது... காத்திருங்கள்."}</p>
-            <button
-              onClick={() => store.fetchAll()}
-              className="text-sm text-primary underline hover:no-underline"
-            >
+          <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground px-4 text-center">
+            <p className="text-sm">{lang === "en" ? "Setting up your profile... Please wait." : "உங்கள் profile தயாராகிறது... காத்திருங்கள்."}</p>
+            <button onClick={() => store.fetchAll()} className="text-sm text-primary underline hover:no-underline">
               {lang === "en" ? "Click here to refresh" : "புதுப்பிக்க இங்கே கிளிக் பண்ணுங்க"}
             </button>
           </div>
