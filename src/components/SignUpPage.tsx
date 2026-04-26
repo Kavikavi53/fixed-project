@@ -532,10 +532,7 @@ export default function SignUpPage({ onBack }: Props) {
                         ✓ {fmt}
                       </span>
                     ))}
-                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold"
-                      style={{ background: "rgba(239,68,68,0.1)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.2)" }}>
-                      ✗ MP4/GIF/Random
-                    </span>
+                    
                   </div>
 
                   {/* File chosen — preview */}

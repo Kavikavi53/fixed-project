@@ -136,7 +136,6 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
     } catch {}
   };
 
-  // Single-row header — காரியாலய last col spans 3 via width only, no rowspan/colspan confusion
   const TABLE_COLS = `
     <colgroup>
       <col style="width:4%;" />
@@ -180,6 +179,12 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
     const B = "border:1px solid #777;";
     const BH = "border:1px solid #555;";
 
+    // Helper: dots rendered in Arial to avoid Tamil font bullet rendering
+    const D = (count: number) =>
+      `<span style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:3px;color:#000;">` +
+      ".".repeat(count) +
+      `</span>`;
+
     const rowsHtml = pageRows.map((r, i) => `
       <tr style="height:26px;">
         <td style="${B}padding:2px;text-align:center;font-size:10px;">${globalOffset + i + 1}</td>
@@ -204,7 +209,7 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
       <table style="width:100%;font-size:11px;margin-bottom:8px;border-collapse:collapse;">
         <tr>
           <td style="width:55%;padding:1px 0;">பெயர் :- கிளி/அக்கராயன் மகா வித்தியாலயம்</td>
-          <td style="padding:1px 0;">                                  வழங்கும் சாலை : கிளிநொச்சி சாலை</td>
+          <td style="padding:1px 0;">வழங்கும் சாலை : கிளிநொச்சி சாலை</td>
         </tr>
         <tr>
           <td style="padding:1px 0;">விலாசம் :- அக்கராயன்குளம், கிளிநொச்சி.</td>
@@ -218,7 +223,7 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
       <div style="font-size:11px;font-weight:600;margin-bottom:4px;text-align:right;color:#333;">தவணை : ${esc(monthLabelStr)} (தொடர்ச்சி)</div>`;
 
     const footerHTML = isLast ? `
-      <p style="font-size:10.5px;margin-top:8px;margin-bottom:4px;line-height:1.6;">மேற்தரப்பட்ட மாணவர்கள் யாவரும் இப்பாடசாலையில் முழு நேர மாணவர்களாக கல்வி கற்பவர்கள் என்றும் மேலும் இவர்கள் பிற இடங்களில் பகுதிநேர வேலைக்கென அமர்த்தப்பட்டவர்கள் அல்ல என்றும் இவர்களுக்கு பருவ கால சீட்டு வழங்கலாம் என்றும் சிபாரிசு செய்கின்றேன்.</p>
+      <p style="font-size:10.5px;margin-top:8px;margin-bottom:6px;line-height:1.6;">மேற்தரப்பட்ட மாணவர்கள் யாவரும் இப்பாடசாலையில் முழு நேர மாணவர்களாக கல்வி கற்பவர்கள் என்றும் மேலும் இவர்கள் பிற இடங்களில் பகுதிநேர வேலைக்கென அமர்த்தப்பட்டவர்கள் அல்ல என்றும் இவர்களுக்கு பருவ கால சீட்டு வழங்கலாம் என்றும் சிபாரிசு செய்கின்றேன்.</p>
       <table style="width:100%;font-size:10.5px;border-collapse:collapse;table-layout:fixed;">
         <colgroup>
           <col style="width:33%;" />
@@ -226,19 +231,19 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
           <col style="width:33%;" />
         </colgroup>
         <tr>
-          <td style="padding:5px 0;">வகுப்பாசிரியர் பெயர் : ................................</td>
+          <td style="padding:5px 0;overflow:hidden;white-space:nowrap;">வகுப்பாசிரியர் பெயர் : ${D(20)}</td>
           <td style="padding:5px 0;"></td>
-          <td style="padding:5px 0;">சீட்டு தயாரித்து வழங்கியவர் : ................................</td>
+          <td style="padding:5px 0;overflow:hidden;white-space:nowrap;">சீட்டு தயாரித்து வழங்கியவர் : ${D(18)}</td>
         </tr>
         <tr>
-          <td style="padding:5px 0;">வகுப்பாசிரியர் ஒப்பம் : ................................</td>
-          <td style="padding:5px 0;text-align:center;">பதிவாளர் ஒப்பம் : ........................................&nbsp;&nbsp;திகதி : ......................................</td>
-          <td style="padding:5px 0;">சீட்டு கொடுபட வேண்டிய திகதி : ................................</td>
+          <td style="padding:5px 0;overflow:hidden;white-space:nowrap;">வகுப்பாசிரியர் ஒப்பம் : ${D(20)}</td>
+          <td style="padding:5px 0;overflow:hidden;white-space:nowrap;">பதிவாளர் ஒப்பம் : ${D(14)}&nbsp;திகதி : ${D(14)}</td>
+          <td style="padding:5px 0;overflow:hidden;white-space:nowrap;">சீட்டு கொடுபட வேண்டிய திகதி : ${D(15)}</td>
         </tr>
         <tr>
           <td style="padding:5px 0;"></td>
           <td style="padding:5px 0;"></td>
-          <td style="padding:5px 0;">சாலை அதிபரின் ஒப்பம் : ................................</td>
+          <td style="padding:5px 0;overflow:hidden;white-space:nowrap;">சாலை அதிபரின் ஒப்பம் : ${D(20)}</td>
         </tr>
       </table>` : "";
 
@@ -341,6 +346,8 @@ export default function ReportsTab({ students, paymentHistory }: Props) {
                 <SelectItem value="all">All Batches</SelectItem>
                 <SelectItem value="2026">2026</SelectItem>
                 <SelectItem value="2027">2027</SelectItem>
+                <SelectItem value="2028">2028</SelectItem>
+                <SelectItem value="2029">2029</SelectItem>
               </SelectContent>
             </Select>
           </div>

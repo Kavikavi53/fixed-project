@@ -19,39 +19,23 @@ export interface AppUser {
   studentId?: string;
 }
 
-// ─── AUTO PAYMENT LOGIC (Admin login-ல trigger ஆகும்) ────────────────────────
-// pg_cron ஒவ்வொரு மாதமும் automatic run ஆகும்.
-// Client-side இது backup-ஆ run ஆகும் — session-ல் ஒரே ஒரு தடவை மட்டும்.
 export async function runAutoPaymentLogic(isAdmin: boolean) {
   if (!isAdmin) return;
-
   const today = new Date().getDate();
   const currentMonth = new Date().toISOString().slice(0, 7);
   const key = `amv_pay_auto_${currentMonth}_d${today}`;
-  if (sessionStorage.getItem(key)) return; // இந்த session-ல் already run ஆச்சு
+  if (sessionStorage.getItem(key)) return;
   sessionStorage.setItem(key, "1");
-
   try {
-    if (today === 1) {
-      // 1ம் தேதி: எல்லா students-ம் pending
-      await (supabase.rpc as any)("auto_set_pending_start_of_month");
-    } else if (today === 20) {
-      // 20ம் தேதி: unpaid students → late
-      await (supabase.rpc as any)("auto_set_late_on_20th");
-    } else if (today === 26) {
-      // 26ம் தேதி: எல்லாரும் pending reset (next month cycle)
-      await (supabase.rpc as any)("auto_reset_on_26th");
-    } else if (today > 20 && today < 26) {
-      // 21-25: unpaid இன்னும் late-ஆ இருக்கணும்
-      await (supabase.rpc as any)("auto_set_late_on_20th");
-    }
+    if (today === 1) await (supabase.rpc as any)("auto_set_pending_start_of_month");
+    else if (today === 20) await (supabase.rpc as any)("auto_set_late_on_20th");
+    else if (today === 26) await (supabase.rpc as any)("auto_reset_on_26th");
+    else if (today > 20 && today < 26) await (supabase.rpc as any)("auto_set_late_on_20th");
   } catch (e) {
-    // pg_cron functions இல்லாட்டா silently ignore
     console.warn("[AMV] Auto payment RPC not ready:", e);
   }
 }
 
-// Generic realtime payload merger
 function applyChange<T extends { id: string; created_at?: string }>(
   prev: T[],
   payload: { eventType: "INSERT" | "UPDATE" | "DELETE"; new: any; old: any },
@@ -85,16 +69,39 @@ export function useStore() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    if (!navigator.onLine) {
+      try {
+        const cs = localStorage.getItem("amv_students");
+        const ca = localStorage.getItem("amv_announcements");
+        const cp = localStorage.getItem("amv_payments");
+        if (cs) setStudents(JSON.parse(cs));
+        if (ca) setAnnouncements(JSON.parse(ca));
+        if (cp) setPaymentHistory(JSON.parse(cp));
+      } catch {}
+      setLoading(false);
+      return;
+    }
+
     const [studentsRes, annRes, auditRes, payRes] = await Promise.all([
       supabase.from("students").select("*").order("created_at", { ascending: false }),
       supabase.from("announcements").select("*").order("created_at", { ascending: false }),
       supabase.from("audit_log").select("*").order("created_at", { ascending: false }),
       supabase.from("payment_history").select("*").order("created_at", { ascending: false }),
     ]);
-    if (studentsRes.data) setStudents(studentsRes.data);
-    if (annRes.data) setAnnouncements(annRes.data);
+
+    if (studentsRes.data) {
+      setStudents(studentsRes.data);
+      localStorage.setItem("amv_students", JSON.stringify(studentsRes.data));
+    }
+    if (annRes.data) {
+      setAnnouncements(annRes.data);
+      localStorage.setItem("amv_announcements", JSON.stringify(annRes.data));
+    }
     if (auditRes.data) setAudit(auditRes.data);
-    if (payRes.data) setPaymentHistory(payRes.data);
+    if (payRes.data) {
+      setPaymentHistory(payRes.data);
+      localStorage.setItem("amv_payments", JSON.stringify(payRes.data));
+    }
     setLoading(false);
   }, []);
 
@@ -117,7 +124,7 @@ export function useStore() {
       })
       .subscribe((status) => {
         if (status === "SUBSCRIBED") setRealtimeStatus("live");
-        else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeStatus("offline");
+        else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) setRealtimeStatus("offline");
         else setRealtimeStatus("connecting");
       });
 
@@ -127,12 +134,27 @@ export function useStore() {
       if (document.visibilityState === "visible") fetchAll();
     };
     document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("online", fetchAll);
+
+    // ✅ syncPending — useEffect உள்ளே define பண்ணு
+    const syncPending = async () => {
+      const q = JSON.parse(localStorage.getItem("amv_pending") || "[]");
+      if (q.length === 0) { fetchAll(); return; }
+      for (const action of q) {
+        if (action.type === "payment") {
+          await supabase.from("students")
+            .update({ payment_status: action.status })
+            .eq("id", action.id);
+        }
+      }
+      localStorage.removeItem("amv_pending");
+      fetchAll();
+    };
+    window.addEventListener("online", syncPending);
 
     return () => {
       supabase.removeChannel(channel);
       document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("online", fetchAll);
+      window.removeEventListener("online", syncPending); // ✅ syncPending — fetchAll இல்லை
     };
   }, [fetchAll]);
 
@@ -141,15 +163,32 @@ export function useStore() {
     await supabase.from("audit_log").insert({ action, details, performed_by: user?.id });
   }, []);
 
+  // ✅ Offline block இங்கே — useCallback உள்ளே
   const updatePaymentStatus = useCallback(async (id: string, status: PaymentStatus) => {
+    // ✅ Offline — queue-ல் save பண்ணு
+    if (!navigator.onLine) {
+      setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: status } : s));
+      const q = JSON.parse(localStorage.getItem("amv_pending") || "[]");
+      q.push({ type: "payment", id, status, ts: Date.now() });
+      localStorage.setItem("amv_pending", JSON.stringify(q));
+      return;
+    }
+
     const { data: { user } } = await supabase.auth.getUser();
     const adminEmail = user?.email ?? null;
     const currentMonth = new Date().toISOString().slice(0, 7);
-    // ── Optimistic update — UI உடனே மாறும் ──
     const prev_status = students.find(s => s.id === id)?.payment_status;
     const studentName = students.find(s => s.id === id)?.full_name ?? id;
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: status, payment_marked_by: adminEmail } : s));
-    const { error } = await supabase.from("students").update({ payment_status: status, payment_marked_by: adminEmail } as any).eq("id", id);
+
+    // Optimistic update
+    setStudents(prev => prev.map(s =>
+      s.id === id ? { ...s, payment_status: status, payment_marked_by: adminEmail } : s
+    ));
+
+    const { error } = await supabase.from("students")
+      .update({ payment_status: status, payment_marked_by: adminEmail } as any)
+      .eq("id", id);
+
     if (!error) {
       const paidDate = status === "paid" ? new Date().toISOString() : null;
       await supabase.from("payment_history").upsert({
@@ -160,10 +199,12 @@ export function useStore() {
         paid_date: paidDate,
         marked_by_admin: status === "paid" ? adminEmail : null,
       } as any, { onConflict: "student_id,month" });
-      await addAudit("Payment Update", `Student ${id} → ${status}`);
+      await addAudit("Payment Update", `Student ${studentName} → ${status}`);
     } else {
-      // rollback on error
-      setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: prev_status ?? "pending" } : s));
+      // Rollback
+      setStudents(prev => prev.map(s =>
+        s.id === id ? { ...s, payment_status: prev_status ?? "pending" } : s
+      ));
     }
   }, [addAudit, students]);
 
