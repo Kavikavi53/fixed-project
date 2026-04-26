@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 
 export default function ThemeToggle() {
   const [dark, setDark] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return localStorage.getItem("amv_theme") === "dark" || !localStorage.getItem("amv_theme");
+    if (typeof window === "undefined") return false;
+    // Default: light theme. Only go dark if explicitly saved as "dark"
+    return localStorage.getItem("amv_theme") === "dark";
   });
 
   useEffect(() => {

@@ -4,10 +4,10 @@ import {
   User, Phone, MapPin, GraduationCap, Calendar, CreditCard,
   Megaphone, ShieldX, Send, ChevronDown, ChevronUp, Bell,
   CheckCircle2, Clock, AlertTriangle, Smartphone, X,
-  Zap, Shield, ArrowRight,
+  Zap, Shield, ArrowRight, Sparkles, TrendingUp,
 } from "lucide-react";
 
-// Gender icons as inline SVG (Mars/Venus not in lucide-react)
+// Gender icons as inline SVG
 const MaleIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="10" cy="14" r="5"/><path d="M21 3l-6.5 6.5"/><path d="M15 3h6v6"/>
@@ -18,6 +18,7 @@ const FemaleIcon = () => (
     <circle cx="12" cy="8" r="5"/><path d="M12 13v8"/><path d="M9 18h6"/>
   </svg>
 );
+
 import StatusBadge from "./StatusBadge";
 import LiveClock from "./LiveClock";
 import StudentAvatar from "./StudentAvatar";
@@ -75,12 +76,10 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
             className="w-full sm:max-w-sm glass-card rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl"
             onClick={e => e.stopPropagation()}
           >
-            {/* Mobile handle */}
             <div className="flex justify-center pt-3 sm:hidden">
               <div className="w-10 h-1 rounded-full bg-border" />
             </div>
 
-            {/* Gradient header */}
             <div className="relative gradient-primary px-6 pt-6 pb-6 overflow-hidden">
               <div
                 className="absolute inset-0 opacity-20"
@@ -112,14 +111,12 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
               </p>
             </div>
 
-            {/* Coming soon badge — cleanly below header */}
             <div className="flex justify-center pt-3 pb-3">
               <span className="bg-amber-500 text-white text-[11px] font-black uppercase tracking-widest px-5 py-1.5 rounded-full shadow-lg">
                 ✦ {t(lang, "Coming Soon", "விரைவில் வருகிறது")} ✦
               </span>
             </div>
 
-            {/* Sri Lanka card logos */}
             <div className="mx-5 mb-3 p-3 rounded-2xl bg-secondary/60 flex items-center justify-center gap-3">
               <div className="flex items-center justify-center bg-white rounded-lg px-2.5 py-1.5 shadow-sm">
                 <span className="text-[#1A1F71] font-black text-sm tracking-tight italic">VISA</span>
@@ -136,7 +133,6 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
               </div>
             </div>
 
-            {/* Features */}
             <div className="px-5 pb-2 space-y-2.5">
               {features.map(({ icon: Icon, label, sub }) => (
                 <div key={label} className="flex items-center gap-3 p-3 rounded-2xl bg-secondary/60">
@@ -152,7 +148,6 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
               ))}
             </div>
 
-            {/* Disabled CTA */}
             <div className="px-5 pt-3 pb-6">
               <div className="w-full h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center gap-2 cursor-not-allowed select-none">
                 <CreditCard className="w-4 h-4 text-primary" />
@@ -207,27 +202,19 @@ export default function StudentDashboard({ student, announcements, paymentHistor
   const currentMonth = now.toLocaleString("ta-IN", { month: "long", year: "numeric" });
   const currentMonthEn = now.toLocaleString("en-US", { month: "long", year: "numeric" });
 
-  // ── SMART NOTIFICATION BANNER LOGIC ──────────────────────
-  // 20th → Amber reminder banner
-  // 21–25th → Orange urgent banner (last date approaching)
-  // 26th+ → Red Tamil blocked banner (missed ticket)
-  const isLateWarning = student.payment_status === "late" && dayOfMonth >= 26;
-
-  // Banner types based on date + payment status
+  // CORRECTED LOGIC: paid=nothing | pending 20th=amber | pending 21-25=orange | late 26+=red
+  // ALL inline inside payment card only — no big top banners
   type BannerType = "amber_20" | "orange_25" | "red_26" | null;
   const getBannerType = (): BannerType => {
     const status = student.payment_status;
-    if (status === "paid") return null; // paid → no banner ever
-    if (dayOfMonth === 20 && (status === "pending" || status === "late")) return "amber_20";
-    if (dayOfMonth >= 21 && dayOfMonth <= 25 && (status === "pending" || status === "late")) return "orange_25";
-    // 26th+ — show red banner for ANY unpaid student (pending or late)
-    // Note: after auto_prnding_on_26th() runs, late → pending, so check both
-    if (dayOfMonth >= 26) return "red_26";
+    if (status === "paid") return null;                                    // paid → nothing ever
+    if (status === "pending" && dayOfMonth === 20) return "amber_20";     // 20th pending → amber
+    if (status === "pending" && dayOfMonth >= 21 && dayOfMonth <= 25) return "orange_25"; // 21-25 pending → orange
+    if (status === "late" && dayOfMonth >= 26) return "red_26";           // 26th+ late → red
     return null;
   };
   const bannerType = getBannerType();
 
-  // ── SOUND EFFECTS ─────────────────────────────────────────
   const playNotificationSound = (type: BannerType) => {
     if (!type) return;
     try {
@@ -236,67 +223,51 @@ export default function StudentDashboard({ student, announcements, paymentHistor
       const gainNode = ctx.createGain();
       oscillator.connect(gainNode);
       gainNode.connect(ctx.destination);
-
       if (type === "amber_20") {
-        // Gentle double-bell — soft amber reminder
         oscillator.type = "sine";
         oscillator.frequency.setValueAtTime(880, ctx.currentTime);
         oscillator.frequency.setValueAtTime(1100, ctx.currentTime + 0.15);
         gainNode.gain.setValueAtTime(0.18, ctx.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.5);
+        oscillator.start(ctx.currentTime); oscillator.stop(ctx.currentTime + 0.5);
       } else if (type === "orange_25") {
-        // Urgent double-pulse — orange warning
         oscillator.type = "triangle";
         oscillator.frequency.setValueAtTime(660, ctx.currentTime);
         oscillator.frequency.setValueAtTime(440, ctx.currentTime + 0.1);
         oscillator.frequency.setValueAtTime(660, ctx.currentTime + 0.25);
         gainNode.gain.setValueAtTime(0.28, ctx.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.7);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.7);
+        oscillator.start(ctx.currentTime); oscillator.stop(ctx.currentTime + 0.7);
       } else if (type === "red_26") {
-        // Warning buzzer — red blocked
         oscillator.type = "sawtooth";
         oscillator.frequency.setValueAtTime(220, ctx.currentTime);
         oscillator.frequency.setValueAtTime(180, ctx.currentTime + 0.2);
         oscillator.frequency.setValueAtTime(220, ctx.currentTime + 0.4);
         gainNode.gain.setValueAtTime(0.22, ctx.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
-        oscillator.start(ctx.currentTime);
-        oscillator.stop(ctx.currentTime + 0.8);
+        oscillator.start(ctx.currentTime); oscillator.stop(ctx.currentTime + 0.8);
       }
-    } catch {
-      // Audio not supported — silent fallback
-    }
+    } catch { /* silent fallback */ }
   };
 
-  // Play sound once when banner first mounts
   const soundPlayedRef = useRef(false);
   useEffect(() => {
     if (bannerType && !soundPlayedRef.current) {
       const timer = setTimeout(() => {
         playNotificationSound(bannerType);
         soundPlayedRef.current = true;
-      }, 800); // small delay so user is settled on page
+      }, 800);
       return () => clearTimeout(timer);
     }
   }, [bannerType]);
 
-  const paymentColor = {
-    paid:    "from-emerald-500/20 to-emerald-600/10 border-emerald-500/30",
-    pending: "from-amber-500/20  to-amber-600/10  border-amber-500/30",
-    late:    "from-red-500/20    to-red-600/10    border-red-500/30",
-  }[student.payment_status] ?? "from-secondary to-secondary/50 border-border";
+  // Payment status styling
+  const paymentConfig = {
+    paid:    { gradient: "from-emerald-500/15 to-emerald-600/8 border-emerald-500/25", icon: <CheckCircle2 className="w-5 h-5 text-emerald-500" />, accentBar: "bg-emerald-500" },
+    pending: { gradient: "from-amber-500/15  to-amber-600/8  border-amber-500/25",  icon: <Clock        className="w-5 h-5 text-amber-500"  />, accentBar: "bg-amber-500" },
+    late:    { gradient: "from-red-500/15    to-red-600/8    border-red-500/25",    icon: <AlertTriangle className="w-5 h-5 text-red-500"   />, accentBar: "bg-red-500" },
+  }[student.payment_status] ?? { gradient: "from-secondary to-secondary/50 border-border", icon: null, accentBar: "bg-primary" };
 
-  const paymentIcon = {
-    paid:    <CheckCircle2 className="w-5 h-5 text-emerald-500" />,
-    pending: <Clock        className="w-5 h-5 text-amber-500"  />,
-    late:    <AlertTriangle className="w-5 h-5 text-red-500"   />,
-  }[student.payment_status];
-
-  // Gender helpers
   const genderRaw = ((student as any).gender ?? "").toString().toLowerCase();
   const isMale   = genderRaw.startsWith("m") || genderRaw === "boy";
   const isFemale = genderRaw.startsWith("f") || genderRaw === "girl";
@@ -352,169 +323,9 @@ export default function StudentDashboard({ student, announcements, paymentHistor
 
   // ── MAIN DASHBOARD ────────────────────────────────────────
   return (
-    <div className="pb-20 px-3 pt-3 max-w-lg mx-auto space-y-3">
+    <div className="pb-24 px-3 pt-3 max-w-lg mx-auto space-y-3">
 
       <OnlinePayModal open={showPayModal} onClose={() => setShowPayModal(false)} lang={lang} />
-
-      {/* ── SMART PAYMENT NOTIFICATION BANNERS ── */}
-      <AnimatePresence>
-
-        {/* 🟡 AMBER BANNER — 20ம் தேதி Reminder */}
-        {bannerType === "amber_20" && (
-          <motion.div
-            key="amber-banner"
-            initial={{ opacity: 0, y: -12, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.97 }}
-            transition={{ type: "spring", stiffness: 340, damping: 26 }}
-            className="rounded-2xl overflow-hidden border border-amber-400/40 shadow-lg"
-            style={{ background: "linear-gradient(135deg, rgba(245,158,11,0.18) 0%, rgba(251,191,36,0.10) 100%)" }}
-          >
-            <div className="flex items-start gap-3 p-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center border border-amber-400/30">
-                <Bell className="w-5 h-5 text-amber-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap mb-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-400">
-                    🔔 Season Payment Reminder
-                  </span>
-                  <span className="text-[9px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-bold border border-amber-400/20">
-                    20ம் தேதி
-                  </span>
-                </div>
-                <p className="text-sm font-bold text-amber-200 leading-snug">
-                  {t(lang,
-                    "Season Payment Reminder — 25th Last Date",
-                    "Season கட்டண நினைவூட்டல் — 25ம் தேதி கடைசி தேதி"
-                  )}
-                </p>
-                <p className="text-xs text-amber-300/70 mt-1 leading-relaxed">
-                  {t(lang,
-                    `Please pay Rs. 530 before 25th ${currentMonthEn} to receive your Season Ticket.`,
-                    `${currentMonth} மாதத்திற்கான Season Ticket பெற 25ம் தேதிக்குள் Rs. 530 செலுத்துங்கள்.`
-                  )}
-                </p>
-              </div>
-            </div>
-            {/* Animated shimmer line */}
-            <div className="h-0.5 w-full" style={{ background: "linear-gradient(90deg, transparent, rgba(245,158,11,0.6), transparent)" }} />
-          </motion.div>
-        )}
-
-        {/* 🟠 ORANGE BANNER — 21–25ம் தேதி Last Date Warning */}
-        {bannerType === "orange_25" && (
-          <motion.div
-            key="orange-banner"
-            initial={{ opacity: 0, y: -12, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.97 }}
-            transition={{ type: "spring", stiffness: 340, damping: 26 }}
-            className="rounded-2xl overflow-hidden border border-orange-500/50 shadow-xl"
-            style={{ background: "linear-gradient(135deg, rgba(234,88,12,0.22) 0%, rgba(249,115,22,0.12) 100%)" }}
-          >
-            {/* Pulsing top strip */}
-            <motion.div
-              animate={{ opacity: [1, 0.5, 1] }}
-              transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}
-              className="h-1 w-full"
-              style={{ background: "linear-gradient(90deg, #ea580c, #f97316, #ea580c)" }}
-            />
-            <div className="flex items-start gap-3 p-4">
-              <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-orange-500/25 flex items-center justify-center border border-orange-400/40">
-                <motion.div
-                  animate={{ scale: [1, 1.15, 1] }}
-                  transition={{ repeat: Infinity, duration: 1.4 }}
-                >
-                  <AlertTriangle className="w-5 h-5 text-orange-400" />
-                </motion.div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap mb-1">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-orange-400">
-                    🚨 Urgent
-                  </span>
-                  {dayOfMonth === 25 && (
-                    <motion.span
-                      animate={{ opacity: [1, 0.4, 1] }}
-                      transition={{ repeat: Infinity, duration: 0.9 }}
-                      className="text-[9px] bg-orange-500/30 text-orange-200 px-2 py-0.5 rounded-full font-black border border-orange-400/30"
-                    >
-                      TODAY IS LAST DATE!
-                    </motion.span>
-                  )}
-                </div>
-                <p className="text-sm font-bold text-orange-100 leading-snug">
-                  {dayOfMonth === 25
-                    ? t(lang, "Today Season Payment Last Date!", "இன்று Season கட்டண கடைசி தேதி!")
-                    : t(lang, `Season Payment Last Date — 25th ${currentMonthEn}`, `Season கட்டண கடைசி தேதி — 25ம் தேதி`)
-                  }
-                </p>
-                <p className="text-xs text-orange-300/80 mt-1 leading-relaxed">
-                  {t(lang,
-                    "Pay Rs. 530 today to avoid losing your Season Ticket for this month.",
-                    "இந்த மாத Season Ticket இழக்காமல் இருக்க இப்போதே Rs. 530 செலுத்துங்கள்."
-                  )}
-                </p>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* 🔴 RED BANNER — 26ம் தேதி+ Missed Ticket — SOLID WHITE TEXT */}
-        {bannerType === "red_26" && (
-          <motion.div
-            key="red-banner"
-            initial={{ opacity: 0, y: -12, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.97 }}
-            transition={{ type: "spring", stiffness: 340, damping: 26 }}
-            className="rounded-2xl overflow-hidden shadow-2xl"
-            style={{ background: "#b91c1c" }}
-          >
-            {/* Pulsing top strip */}
-            <motion.div
-              animate={{ opacity: [1, 0.3, 1] }}
-              transition={{ repeat: Infinity, duration: 1.0 }}
-              className="h-2 w-full"
-              style={{ background: "rgba(255,255,255,0.35)" }}
-            />
-            <div className="p-4 space-y-3">
-              {/* Header row */}
-              <div className="flex items-center gap-2">
-                <motion.div
-                  animate={{ rotate: [0, -10, 10, -5, 5, 0] }}
-                  transition={{ repeat: Infinity, duration: 2.0 }}
-                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                  style={{ background: "rgba(255,255,255,0.2)" }}
-                >
-                  <ShieldX className="w-6 h-6 text-white" />
-                </motion.div>
-                <span className="text-white font-black text-sm uppercase tracking-wide">
-                  ⛔ Season Ticket கிடைக்காது
-                </span>
-              </div>
-              {/* Main Tamil message — large white text */}
-              <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: "12px", padding: "12px 14px" }}>
-                <p style={{ color: "#ffffff", fontWeight: 900, fontSize: "1rem", lineHeight: 1.5, margin: 0 }}>
-                  நீங்கள் பணம் செலுத்த தாமதமானதால்
-                </p>
-                <p style={{ color: "#fca5a5", fontWeight: 900, fontSize: "1.05rem", lineHeight: 1.4, margin: "4px 0" }}>
-                  {currentMonth} மாதத்துக்குரிய
-                </p>
-                <p style={{ color: "#ffffff", fontWeight: 900, fontSize: "1rem", lineHeight: 1.5, margin: 0 }}>
-                  Season Tickets பெற்றுக்கொள்ள முடியாது.
-                </p>
-              </div>
-              {/* Sub note */}
-              <p style={{ color: "rgba(255,255,255,0.85)", fontSize: "0.8rem", fontWeight: 600, margin: 0, lineHeight: 1.5 }}>
-                ⚠ அடுத்த மாதம் சரியான நேரத்தில் கட்டணம் செலுத்தி Season Ticket பெறுங்கள்.
-              </p>
-            </div>
-          </motion.div>
-        )}
-
-      </AnimatePresence>
 
       {/* Urgent Announcements */}
       <AnimatePresence>
@@ -536,20 +347,25 @@ export default function StudentDashboard({ student, announcements, paymentHistor
         ))}
       </AnimatePresence>
 
-      {/* ── Profile Card ── */}
+      {/* ── PRO PROFILE CARD ── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="glass-card rounded-3xl overflow-hidden"
+        className="glass-card rounded-3xl overflow-hidden shadow-md"
       >
-        {/* Blue banner — clock & date only */}
-        <div className="gradient-primary px-4 py-3 flex items-center justify-between">
-          <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest">A.M.V Season Tickets</p>
+        {/* Header: gradient band with clock */}
+        <div className="gradient-primary px-4 py-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg bg-white/20 flex items-center justify-center">
+              <Sparkles className="w-3.5 h-3.5 text-white" />
+            </div>
+            <p className="text-white font-bold text-xs uppercase tracking-widest">A.M.V Season Tickets</p>
+          </div>
           <LiveClock />
         </div>
 
-        {/* Below banner — avatar + name + id + badges */}
-        <div className="px-4 py-3 flex items-center gap-3">
+        {/* Profile body */}
+        <div className="px-4 py-3.5 flex items-center gap-3.5">
           <div className="flex-shrink-0">
             <StudentAvatar
               name={student.full_name}
@@ -563,94 +379,226 @@ export default function StudentDashboard({ student, announcements, paymentHistor
               className="font-bold text-foreground leading-snug"
               style={{
                 fontSize: student.full_name.length > 20 ? "0.82rem" : student.full_name.length > 15 ? "0.92rem" : "1rem",
-                whiteSpace: "nowrap",
-                overflow: "visible",
               }}
             >{student.full_name}</h2>
-            <p className="text-xs font-mono text-primary mt-0.5">{student.auto_id}</p>
+            <p className="text-xs font-mono text-primary mt-0.5 font-semibold">{student.auto_id}</p>
             <div className="flex flex-wrap gap-1.5 mt-2">
-              <span className="text-[11px] bg-secondary px-2.5 py-1 rounded-full text-secondary-foreground font-medium">{student.batch}</span>
-              <span className="text-[11px] bg-secondary px-2.5 py-1 rounded-full text-secondary-foreground font-medium">{student.stream}</span>
+              <span className="text-[11px] bg-primary/10 text-primary px-2.5 py-0.5 rounded-full font-semibold">{student.batch}</span>
+              <span className="text-[11px] bg-secondary px-2.5 py-0.5 rounded-full text-secondary-foreground font-medium">{student.stream}</span>
               <StatusBadge status={student.payment_status} />
             </div>
           </div>
         </div>
+
+        {/* Payment status mini-bar inside profile card */}
+        <div className="mx-4 mb-3.5 h-1 rounded-full bg-secondary overflow-hidden">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: student.payment_status === "paid" ? "100%" : student.payment_status === "pending" ? "50%" : "20%" }}
+            transition={{ duration: 1, delay: 0.3, ease: "easeOut" }}
+            className={`h-full rounded-full ${paymentConfig.accentBar}`}
+          />
+        </div>
       </motion.div>
 
-      {/* ── Payment Card ── */}
+      {/* ── PRO PAYMENT CARD ── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.08 }}
-        className={`glass-card rounded-2xl p-4 bg-gradient-to-br border ${paymentColor}`}
+        className={`glass-card rounded-2xl overflow-hidden border bg-gradient-to-br ${paymentConfig.gradient} shadow-sm`}
       >
-        <div className="flex items-center gap-2 mb-3">
-          <CreditCard className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold text-foreground">{t(lang, "Payment Status", "கட்டண நிலை")}</h3>
-        </div>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-muted-foreground">{t(lang, "Current Month Fee", "இந்த மாத கட்டணம்")}</p>
-            <p className="text-2xl font-bold text-foreground mt-0.5">Rs. 530<span className="text-sm font-normal text-muted-foreground">.00</span></p>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            {paymentIcon}
-            <StatusBadge status={student.payment_status} />
-          </div>
-        </div>
+        {/* Accent top strip */}
+        <div className={`h-1 w-full ${paymentConfig.accentBar} opacity-60`} />
 
-        {/* 26th+ missed ticket inline reminder inside payment card */}
-        {isLateWarning && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/25 flex items-start gap-2"
-          >
-            <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-red-400 leading-relaxed font-medium">
-              நீங்கள் பணம் செலுத்த தாமதமானதால்{" "}
-              <span className="font-bold text-red-300">{currentMonth}</span>{" "}
-              மாதத்துக்குரிய Season Tickets பெற்றுக்கொள்ள முடியாது.
-            </p>
-          </motion.div>
-        )}
+        <div className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-bold text-foreground">{t(lang, "Payment Status", "கட்டண நிலை")}</h3>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {paymentConfig.icon}
+              <StatusBadge status={student.payment_status} />
+            </div>
+          </div>
 
-        {studentPayments.length > 0 && (
-          <div className="mt-3 border-t border-border/30 pt-3">
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="flex items-center justify-between w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <span className="font-semibold uppercase tracking-wider">{t(lang, "Payment History", "கட்டண வரலாறு")} ({studentPayments.length})</span>
-              {showHistory ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
-            <AnimatePresence>
-              {showHistory && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="pt-2 space-y-1.5">
-                    {studentPayments.map(h => (
-                      <div key={h.id} className="flex items-center justify-between text-xs py-1.5 border-b border-border/20 last:border-0">
-                        <span className="text-muted-foreground font-medium">{h.month}</span>
-                        <div className="flex items-center gap-2">
-                          {h.paid_date && <span className="text-muted-foreground/70">{h.paid_date}</span>}
-                          <StatusBadge status={h.status} />
-                        </div>
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">{t(lang, "Monthly Fee", "மாத கட்டணம்")}</p>
+              <div className="flex items-baseline gap-1 mt-0.5">
+                <span className="text-3xl font-black text-foreground tracking-tight">Rs. 530</span>
+                <span className="text-sm font-normal text-muted-foreground">.00</span>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-muted-foreground">{currentMonthEn}</p>
+              <p className="text-[11px] font-semibold text-foreground mt-0.5">
+                {student.payment_status === "paid"
+                  ? t(lang, "✓ Ticket Issued", "✓ Ticket வழங்கப்பட்டது")
+                  : student.payment_status === "pending"
+                  ? t(lang, "Due before 25th", "25-க்குள் செலுத்தவும்")
+                  : t(lang, "Payment Overdue", "கட்டணம் தாமதமானது")}
+              </p>
+            </div>
+          </div>
+
+          {/* ── INLINE NOTIFICATION — inside payment card only ── */}
+          <AnimatePresence>
+            {/* 🟡 AMBER — 20th pending */}
+            {bannerType === "amber_20" && (
+              <motion.div
+                key="notif-amber"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-3 rounded-xl border border-amber-400/35 overflow-hidden"
+                  style={{ background: "linear-gradient(135deg, rgba(245,158,11,0.12) 0%, rgba(251,191,36,0.06) 100%)" }}>
+                  <div className="flex items-start gap-2.5 p-3">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Bell className="w-3.5 h-3.5 text-amber-500" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-amber-500">🔔 Season Payment Reminder</span>
+                        <span className="text-[8px] bg-amber-500/15 text-amber-600 px-1.5 py-0.5 rounded-full font-bold border border-amber-400/25">20ம் தேதி</span>
                       </div>
-                    ))}
+                      <p className="text-xs font-bold text-foreground leading-snug">
+                        Season கட்டண நினைவூட்டல் — 25ம் தேதி கடைசி தேதி
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                        {currentMonth} மாதத்திற்கான Season Ticket பெற 25ம் தேதிக்குள் Rs. 530 செலுத்துங்கள்.
+                      </p>
+                    </div>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        )}
+                  <div className="h-px w-full" style={{ background: "linear-gradient(90deg, transparent, rgba(245,158,11,0.4), transparent)" }} />
+                </div>
+              </motion.div>
+            )}
+
+            {/* 🟠 ORANGE — 21–25th pending */}
+            {bannerType === "orange_25" && (
+              <motion.div
+                key="notif-orange"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-3 rounded-xl border border-orange-500/40 overflow-hidden"
+                  style={{ background: "linear-gradient(135deg, rgba(234,88,12,0.14) 0%, rgba(249,115,22,0.07) 100%)" }}>
+                  {/* Pulsing top line */}
+                  <motion.div
+                    animate={{ opacity: [1, 0.3, 1] }}
+                    transition={{ repeat: Infinity, duration: 1.6 }}
+                    className="h-0.5 w-full"
+                    style={{ background: "linear-gradient(90deg, #ea580c, #f97316, #ea580c)" }}
+                  />
+                  <div className="flex items-start gap-2.5 p-3">
+                    <div className="w-7 h-7 rounded-lg bg-orange-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1.2 }}>
+                        <AlertTriangle className="w-3.5 h-3.5 text-orange-500" />
+                      </motion.div>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-orange-500">🚨 Urgent</span>
+                        {dayOfMonth === 25 && (
+                          <motion.span
+                            animate={{ opacity: [1, 0.4, 1] }}
+                            transition={{ repeat: Infinity, duration: 0.8 }}
+                            className="text-[8px] bg-orange-500/20 text-orange-600 px-1.5 py-0.5 rounded-full font-black border border-orange-400/30"
+                          >
+                            TODAY IS LAST DATE!
+                          </motion.span>
+                        )}
+                      </div>
+                      <p className="text-xs font-bold text-foreground leading-snug">
+                        {dayOfMonth === 25 ? "இன்று Season கட்டண கடைசி தேதி!" : "Season கட்டண கடைசி தேதி — 25ம் தேதி"}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                        இந்த மாத Season Ticket இழக்காமல் இருக்க இப்போதே Rs. 530 செலுத்துங்கள்.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* 🔴 RED — 26th+ late */}
+            {bannerType === "red_26" && (
+              <motion.div
+                key="notif-red"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.25 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-3 rounded-xl border border-red-500/40 overflow-hidden bg-red-500/8">
+                  <div className="flex items-start gap-2.5 p-3">
+                    <div className="w-7 h-7 rounded-lg bg-red-500/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <ShieldX className="w-3.5 h-3.5 text-red-500" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-red-500">⛔ Season Ticket கிடைக்காது</span>
+                      <p className="text-xs font-bold text-foreground mt-0.5 leading-snug">
+                        நீங்கள் பணம் செலுத்த தாமதமானதால் <span className="text-red-500">{currentMonth}</span> மாதத்துக்குரிய Season Tickets பெற்றுக்கொள்ள முடியாது.
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
+                        ⚠ அடுத்த மாதம் சரியான நேரத்தில் கட்டணம் செலுத்தி Season Ticket பெறுங்கள்.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {studentPayments.length > 0 && (
+            <div className="mt-3 border-t border-border/30 pt-3">
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className="flex items-center justify-between w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                  <TrendingUp className="w-3 h-3" />
+                  {t(lang, "Payment History", "கட்டண வரலாறு")} ({studentPayments.length})
+                </span>
+                {showHistory ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+              <AnimatePresence>
+                {showHistory && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="pt-2 space-y-1.5">
+                      {studentPayments.map(h => (
+                        <div key={h.id} className="flex items-center justify-between text-xs py-1.5 border-b border-border/20 last:border-0">
+                          <span className="text-muted-foreground font-medium">{h.month}</span>
+                          <div className="flex items-center gap-2">
+                            {h.paid_date && <span className="text-muted-foreground/70">{h.paid_date}</span>}
+                            <StatusBadge status={h.status} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+        </div>
       </motion.div>
 
-      {/* ── Personal Details ── */}
+      {/* ── PERSONAL DETAILS ── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -661,11 +609,16 @@ export default function StudentDashboard({ student, announcements, paymentHistor
           onClick={() => setShowDetails(!showDetails)}
           className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-secondary/40 transition-colors"
         >
-          <span className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <span className="text-sm font-bold text-foreground flex items-center gap-2">
             <User className="w-4 h-4 text-primary" />
             {t(lang, "Personal Details", "தனிப்பட்ட விவரங்கள்")}
           </span>
-          {showDetails ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground font-medium hidden sm:block">
+              {showDetails ? t(lang, "Hide", "மறை") : t(lang, "View", "பார்")}
+            </span>
+            {showDetails ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+          </div>
         </button>
 
         <AnimatePresence>
@@ -677,8 +630,6 @@ export default function StudentDashboard({ student, announcements, paymentHistor
               className="overflow-hidden"
             >
               <div className="px-4 pb-4 divide-y divide-border/30">
-
-                {/* ✅ FIX 2 — Gender field with color pill */}
                 {hasGender && (
                   <div className="flex items-center gap-3 py-2.5">
                     <GenderIcon className={`w-3.5 h-3.5 flex-shrink-0 ${isMale ? "text-blue-500" : "text-pink-500"}`} />
@@ -690,7 +641,6 @@ export default function StudentDashboard({ student, announcements, paymentHistor
                     </span>
                   </div>
                 )}
-
                 {([
                   { icon: User,          label: t(lang, "NIC",      "NIC"),              value: student.nic },
                   { icon: Calendar,      label: t(lang, "DOB",      "பிறந்த தேதி"),      value: student.dob },
@@ -701,7 +651,7 @@ export default function StudentDashboard({ student, announcements, paymentHistor
                 ] as const).map(({ icon: Icon, label, value }) => (
                   <div key={label} className="flex items-start gap-3 py-2.5">
                     <Icon className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                    <span className="text-muted-foreground flex-shrink-0 w-20 text-xs">{label}</span>
+                    <span className="text-muted-foreground flex-shrink-0 w-20 text-xs font-medium">{label}</span>
                     <span className="text-foreground text-xs leading-snug break-words min-w-0">{value ?? "-"}</span>
                   </div>
                 ))}
@@ -711,7 +661,7 @@ export default function StudentDashboard({ student, announcements, paymentHistor
         </AnimatePresence>
       </motion.div>
 
-      {/* ── ✅ FIX 3 — Online Pay Pro card → modal on click ── */}
+      {/* ── ONLINE PAY PRO CARD ── */}
       <motion.div
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
@@ -719,9 +669,8 @@ export default function StudentDashboard({ student, announcements, paymentHistor
       >
         <button
           onClick={() => setShowPayModal(true)}
-          className="w-full glass-card rounded-2xl p-4 flex items-center gap-4 hover:bg-secondary/30 active:scale-[0.98] transition-all text-left group cursor-pointer"
+          className="w-full glass-card rounded-2xl p-4 flex items-center gap-4 hover:bg-secondary/30 active:scale-[0.98] transition-all text-left group cursor-pointer shadow-sm"
         >
-          {/* Gradient icon with badge */}
           <div className="relative flex-shrink-0">
             <div className="w-12 h-12 rounded-2xl gradient-primary flex items-center justify-center shadow-md group-hover:shadow-primary/25 transition-shadow">
               <CreditCard className="w-6 h-6 text-primary-foreground" />
@@ -730,13 +679,9 @@ export default function StudentDashboard({ student, announcements, paymentHistor
               <span className="text-white text-[8px] font-black leading-none">!</span>
             </div>
           </div>
-
-          {/* Text */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-sm font-bold text-foreground">
-                {t(lang, "Online Payment", "ஆன்லைன் கட்டணம்")}
-              </p>
+              <p className="text-sm font-bold text-foreground">{t(lang, "Online Payment", "ஆன்லைன் கட்டணம்")}</p>
               <span className="text-[9px] font-black uppercase tracking-widest bg-amber-500/15 text-amber-600 px-2 py-0.5 rounded-full border border-amber-500/20">
                 {t(lang, "Coming Soon", "விரைவில்")}
               </span>
@@ -745,12 +690,11 @@ export default function StudentDashboard({ student, announcements, paymentHistor
               {t(lang, "Visa · Mastercard · Lanka QR · Bank Transfer", "Visa · Mastercard · Lanka QR · வங்கி பரிமாற்றம்")}
             </p>
           </div>
-
           <ArrowRight className="w-4 h-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all flex-shrink-0" />
         </button>
       </motion.div>
 
-      {/* ── Announcements ── */}
+      {/* ── ANNOUNCEMENTS ── */}
       {announcements.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -758,15 +702,15 @@ export default function StudentDashboard({ student, announcements, paymentHistor
           transition={{ delay: 0.18 }}
           className="glass-card rounded-2xl p-4 space-y-2.5"
         >
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
             <Megaphone className="w-4 h-4 text-primary" />
             {t(lang, "Announcements", "அறிவிப்புகள்")}
-            <span className="ml-auto text-xs bg-primary/15 text-primary px-2 py-0.5 rounded-full font-medium">{announcements.length}</span>
+            <span className="ml-auto text-xs bg-primary/15 text-primary px-2 py-0.5 rounded-full font-semibold">{announcements.length}</span>
           </h3>
           <div className="space-y-2">
             {announcements.map(a => (
               <div key={a.id} className={`p-3 rounded-xl bg-secondary text-sm ${a.urgent ? "border-l-2 border-amber-500" : ""}`}>
-                <p className="font-medium text-foreground text-xs leading-snug">{a.title}</p>
+                <p className="font-semibold text-foreground text-xs leading-snug">{a.title}</p>
                 <p className="text-muted-foreground text-xs mt-1 leading-relaxed">{a.message}</p>
               </div>
             ))}
