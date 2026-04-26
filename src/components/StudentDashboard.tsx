@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   User, Phone, MapPin, GraduationCap, Calendar, CreditCard,
@@ -8,13 +8,13 @@ import {
 } from "lucide-react";
 
 // Gender icons as inline SVG
-const MaleIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+const MaleIcon = ({ className }: { className?: string }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <circle cx="10" cy="14" r="5"/><path d="M21 3l-6.5 6.5"/><path d="M15 3h6v6"/>
   </svg>
 );
-const FemaleIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+const FemaleIcon = ({ className }: { className?: string }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <circle cx="12" cy="8" r="5"/><path d="M12 13v8"/><path d="M9 18h6"/>
   </svg>
 );
@@ -197,69 +197,8 @@ export default function StudentDashboard({ student, announcements, paymentHistor
     setSending(false);
   };
 
-  const now = new Date();
- const dayOfMonth = now.getDate();
-  const currentMonth = now.toLocaleString("ta-IN", { month: "long", year: "numeric" });
-  const currentMonthEn = now.toLocaleString("en-US", { month: "long", year: "numeric" });
 
-  // CORRECTED LOGIC: paid=nothing | pending 20th=amber | pending 21-25=orange | late 26+=red
-  // ALL inline inside payment card only — no big top banners
-  type BannerType = "amber_20" | "orange_25" | "red_26" | null;
-  const getBannerType = (): BannerType => {
-    const status = student.payment_status;
-    if (status === "paid") return null;                                    // paid → nothing ever
-    if (status === "pending" && dayOfMonth === 20) return "amber_20";     // 20th pending → amber
-    if (status === "pending" && dayOfMonth >= 21 && dayOfMonth <= 25) return "orange_25"; // 21-25 pending → orange
-    if (status === "late" && dayOfMonth >= 26) return "red_26";           // 26th+ late → red
-    return null;
-  };
-  const bannerType = getBannerType();
 
-  const playNotificationSound = (type: BannerType) => {
-    if (!type) return;
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      if (type === "amber_20") {
-        oscillator.type = "sine";
-        oscillator.frequency.setValueAtTime(880, ctx.currentTime);
-        oscillator.frequency.setValueAtTime(1100, ctx.currentTime + 0.15);
-        gainNode.gain.setValueAtTime(0.18, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-        oscillator.start(ctx.currentTime); oscillator.stop(ctx.currentTime + 0.5);
-      } else if (type === "orange_25") {
-        oscillator.type = "triangle";
-        oscillator.frequency.setValueAtTime(660, ctx.currentTime);
-        oscillator.frequency.setValueAtTime(440, ctx.currentTime + 0.1);
-        oscillator.frequency.setValueAtTime(660, ctx.currentTime + 0.25);
-        gainNode.gain.setValueAtTime(0.28, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.7);
-        oscillator.start(ctx.currentTime); oscillator.stop(ctx.currentTime + 0.7);
-      } else if (type === "red_26") {
-        oscillator.type = "sawtooth";
-        oscillator.frequency.setValueAtTime(220, ctx.currentTime);
-        oscillator.frequency.setValueAtTime(180, ctx.currentTime + 0.2);
-        oscillator.frequency.setValueAtTime(220, ctx.currentTime + 0.4);
-        gainNode.gain.setValueAtTime(0.22, ctx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
-        oscillator.start(ctx.currentTime); oscillator.stop(ctx.currentTime + 0.8);
-      }
-    } catch { /* silent fallback */ }
-  };
-
-  const soundPlayedRef = useRef(false);
-  useEffect(() => {
-    if (bannerType && !soundPlayedRef.current) {
-      const timer = setTimeout(() => {
-        playNotificationSound(bannerType);
-        soundPlayedRef.current = true;
-      }, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [bannerType]);
 
   // Payment status styling
   const paymentConfig = {
@@ -432,10 +371,10 @@ export default function StudentDashboard({ student, announcements, paymentHistor
               </div>
             </div>
             <div className="text-right">
-              <p className="text-[10px] text-muted-foreground">{currentMonthEn}</p>
+              <p className="text-[10px] text-muted-foreground">{new Date().toLocaleString("en-US", { month: "long", year: "numeric" })}</p>
               <p className="text-[11px] font-semibold text-foreground mt-0.5">
                 {student.payment_status === "paid"
-                  ? t(lang, "✓ Ticket Issued", "✓ Ticket வழங்கப்பட்டது")
+                  ? t(lang, " ", "")
                   : student.payment_status === "pending"
                   ? t(lang, "Due before 25th", "25-க்குள் செலுத்தவும்")
                   : t(lang, "Payment Overdue", "கட்டணம் தாமதமானது")}
@@ -443,121 +382,7 @@ export default function StudentDashboard({ student, announcements, paymentHistor
             </div>
           </div>
 
-          {/* ── INLINE NOTIFICATION — inside payment card only ── */}
-          <AnimatePresence>
-            {/* 🟡 AMBER — 20th pending */}
-            {bannerType === "amber_20" && (
-              <motion.div
-                key="notif-amber"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.25 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-3 rounded-xl border border-amber-400/35 overflow-hidden"
-                  style={{ background: "linear-gradient(135deg, rgba(245,158,11,0.12) 0%, rgba(251,191,36,0.06) 100%)" }}>
-                  <div className="flex items-start gap-2.5 p-3">
-                    <div className="w-7 h-7 rounded-lg bg-amber-500/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <Bell className="w-3.5 h-3.5 text-amber-500" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-amber-500">🔔 Season Payment Reminder</span>
-                        <span className="text-[8px] bg-amber-500/15 text-amber-600 px-1.5 py-0.5 rounded-full font-bold border border-amber-400/25">20ம் தேதி</span>
-                      </div>
-                      <p className="text-xs font-bold text-foreground leading-snug">
-                        Season கட்டண நினைவூட்டல் — 25ம் தேதி கடைசி தேதி
-                      </p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                        {currentMonth} மாதத்திற்கான Season Ticket பெற 25ம் தேதிக்குள் Rs. 530 செலுத்துங்கள்.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="h-px w-full" style={{ background: "linear-gradient(90deg, transparent, rgba(245,158,11,0.4), transparent)" }} />
-                </div>
-              </motion.div>
-            )}
-
-            {/* 🟠 ORANGE — 21–25th pending */}
-            {bannerType === "orange_25" && (
-              <motion.div
-                key="notif-orange"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.25 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-3 rounded-xl border border-orange-500/40 overflow-hidden"
-                  style={{ background: "linear-gradient(135deg, rgba(234,88,12,0.14) 0%, rgba(249,115,22,0.07) 100%)" }}>
-                  {/* Pulsing top line */}
-                  <motion.div
-                    animate={{ opacity: [1, 0.3, 1] }}
-                    transition={{ repeat: Infinity, duration: 1.6 }}
-                    className="h-0.5 w-full"
-                    style={{ background: "linear-gradient(90deg, #ea580c, #f97316, #ea580c)" }}
-                  />
-                  <div className="flex items-start gap-2.5 p-3">
-                    <div className="w-7 h-7 rounded-lg bg-orange-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1.2 }}>
-                        <AlertTriangle className="w-3.5 h-3.5 text-orange-500" />
-                      </motion.div>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-orange-500">🚨 Urgent</span>
-                        {dayOfMonth === 25 && (
-                          <motion.span
-                            animate={{ opacity: [1, 0.4, 1] }}
-                            transition={{ repeat: Infinity, duration: 0.8 }}
-                            className="text-[8px] bg-orange-500/20 text-orange-600 px-1.5 py-0.5 rounded-full font-black border border-orange-400/30"
-                          >
-                            TODAY IS LAST DATE!
-                          </motion.span>
-                        )}
-                      </div>
-                      <p className="text-xs font-bold text-foreground leading-snug">
-                        {dayOfMonth === 25 ? "இன்று Season கட்டண கடைசி தேதி!" : "Season கட்டண கடைசி தேதி — 25ம் தேதி"}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                        இந்த மாத Season Ticket இழக்காமல் இருக்க இப்போதே Rs. 530 செலுத்துங்கள்.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
-            {/* 🔴 RED — 26th+ late */}
-            {bannerType === "red_26" && (
-              <motion.div
-                key="notif-red"
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.25 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-3 rounded-xl border border-red-500/40 overflow-hidden bg-red-500/8">
-                  <div className="flex items-start gap-2.5 p-3">
-                    <div className="w-7 h-7 rounded-lg bg-red-500/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <ShieldX className="w-3.5 h-3.5 text-red-500" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[9px] font-black uppercase tracking-widest text-red-500">⛔ Season Ticket கிடைக்காது</span>
-                      <p className="text-xs font-bold text-foreground mt-0.5 leading-snug">
-                        நீங்கள் பணம் செலுத்த தாமதமானதால் <span className="text-red-500">{currentMonth}</span> மாதத்துக்குரிய Season Tickets பெற்றுக்கொள்ள முடியாது.
-                      </p>
-                      <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed">
-                        ⚠ அடுத்த மாதம் சரியான நேரத்தில் கட்டணம் செலுத்தி Season Ticket பெறுங்கள்.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          
 
           {studentPayments.length > 0 && (
             <div className="mt-3 border-t border-border/30 pt-3">
