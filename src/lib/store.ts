@@ -145,6 +145,9 @@ export function useStore() {
     const { data: { user } } = await supabase.auth.getUser();
     const adminEmail = user?.email ?? null;
     const currentMonth = new Date().toISOString().slice(0, 7);
+    // ── Optimistic update — UI உடனே மாறும் ──
+    const prev_status = students.find(s => s.id === id)?.payment_status;
+    const studentName = students.find(s => s.id === id)?.full_name ?? id;
     setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: status, payment_marked_by: adminEmail } : s));
     const { error } = await supabase.from("students").update({ payment_status: status, payment_marked_by: adminEmail } as any).eq("id", id);
     if (!error) {
@@ -158,8 +161,11 @@ export function useStore() {
         marked_by_admin: status === "paid" ? adminEmail : null,
       } as any, { onConflict: "student_id,month" });
       await addAudit("Payment Update", `Student ${id} → ${status}`);
+    } else {
+      // rollback on error
+      setStudents(prev => prev.map(s => s.id === id ? { ...s, payment_status: prev_status ?? "pending" } : s));
     }
-  }, [addAudit]);
+  }, [addAudit, students]);
 
   const addStudent = useCallback(async (student: {
     full_name: string; address?: string; dob?: string; nic?: string; email?: string;

@@ -4,7 +4,8 @@ import {
   Bus, Lock, Eye, EyeOff, Mail, Phone, MapPin,
   GraduationCap, ArrowLeft, Upload, FileText, X,
   User, Check, AlertCircle, ArrowRight, Sparkles,
-  Calendar, CreditCard, Users
+  Calendar, CreditCard, Users,
+  ShieldCheck
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
@@ -68,6 +69,7 @@ export default function SignUpPage({ onBack }: Props) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [letterFile, setLetterFile] = useState<File | null>(null);
+  const [letterPreviewUrl, setLetterPreviewUrl] = useState<string | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
 
   const [form, setForm] = useState({
@@ -165,7 +167,8 @@ export default function SignUpPage({ onBack }: Props) {
         }
       }
 
-      await supabase.auth.signOut();
+      // signup success — auto login (signOut பண்ணாம, session இருக்கும்)
+      // Index.tsx onAuthStateChange → dashboard auto redirect
       setSuccess(true);
     } catch (err: any) {
       setError(err?.message || "An unexpected error occurred");
@@ -173,7 +176,7 @@ export default function SignUpPage({ onBack }: Props) {
     setSubmitting(false);
   };
 
-  // Success screen
+  // Auto-redirect success screen — 2s countdown then dashboard via onAuthStateChange
   if (success) {
     return (
       <div className="min-h-screen flex items-center justify-center p-5 relative overflow-hidden" style={{ background: "#060d1f" }}>
@@ -200,18 +203,17 @@ export default function SignUpPage({ onBack }: Props) {
                   WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
                 }}>Registration Successful!</h2>
                 <p className="text-[12px] leading-relaxed" style={{ color: "rgba(147,197,253,0.55)" }}>
-                  Your student account has been created. You can now sign in with your credentials.
+                  உங்கள் account ready! Dashboard-க்கு போகிறோம்...
                 </p>
               </div>
-              <motion.button whileTap={{ scale: 0.97 }} onClick={onBack}
-                className="w-full rounded-2xl font-bold text-sm text-white"
-                style={{
-                  height: "52px",
-                  background: "linear-gradient(135deg, #15803d, #22c55e)",
-                  boxShadow: "0 8px 24px rgba(34,197,94,0.3)",
-                }}>
-                Go to Sign In →
-              </motion.button>
+              {/* Spinner — dashboard load ஆகும் வரை */}
+              <div className="flex items-center justify-center gap-2">
+                <div className="w-5 h-5 border-2 rounded-full animate-spin"
+                  style={{ borderColor: "rgba(34,197,94,0.3)", borderTopColor: "#22c55e" }} />
+                <span className="text-[11px]" style={{ color: "rgba(147,197,253,0.5)" }}>
+                  Loading dashboard...
+                </span>
+              </div>
             </div>
           </div>
         </motion.div>
@@ -464,46 +466,166 @@ export default function SignUpPage({ onBack }: Props) {
               exit={{ opacity: 0, x: -24 }} transition={{ duration: 0.22 }}
               className="space-y-4">
 
+              {/* ── Model Letter Template View ── */}
+              <div className="rounded-3xl overflow-hidden" style={{
+                background: "rgba(13,22,48,0.78)",
+                border: "1px solid rgba(59,130,246,0.18)",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+              }}>
+                <div className="h-px" style={{ background: "linear-gradient(90deg, transparent, rgba(59,130,246,0.5), transparent)" }} />
+                <div className="p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-400" />
+                    <p className="text-xs font-bold text-white">Model Letter Template</p>
+                    <span className="ml-auto text-[9px] px-2 py-0.5 rounded-full font-bold"
+                      style={{ background: "rgba(59,130,246,0.15)", color: "#93c5fd", border: "1px solid rgba(59,130,246,0.25)" }}>
+                      SAMPLE
+                    </span>
+                  </div>
+
+                  {/* Letter sample image */}
+                  <div className="rounded-2xl overflow-hidden" style={{
+                    border: "1px solid rgba(59,130,246,0.2)",
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+                  }}>
+                    <img
+                      src="/permission_letter_sample.jpg"
+                      alt="Permission Letter Sample"
+                      className="w-full object-contain"
+                      style={{ background: "#fff", display: "block" }}
+                    />
+                  </div>
+
+                  <p className="text-[9px] text-center" style={{ color: "rgba(147,197,253,0.4)" }}>
+                    ↑ மேலே உள்ள format-ல் கையால் எழுதி, photo எடுத்து upload பண்ணுங்க
+                  </p>
+                </div>
+              </div>
+
+              {/* ── Upload Section ── */}
               <div className="rounded-3xl overflow-hidden" style={{
                 background: "rgba(13,22,48,0.78)",
                 border: isLetterRequired ? "1px solid rgba(59,130,246,0.25)" : "1px solid rgba(59,130,246,0.1)",
                 boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
               }}>
                 <div className="h-px" style={{ background: "linear-gradient(90deg, transparent, rgba(59,130,246,0.5), transparent)" }} />
-                <div className="p-5 text-center space-y-4">
-                  <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto"
-                    style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.2)" }}>
-                    <FileText className="w-8 h-8 text-blue-400" />
-                  </div>
+                <div className="p-5 text-center space-y-3">
                   <div>
                     <p className="text-sm font-bold text-white">
-                      Parent Permission Letter
+                      உங்கள் Permission Letter Upload
                       {isLetterRequired
                         ? <span className="ml-1 text-red-400 text-xs">* Required</span>
                         : <span className="ml-1 text-blue-300/50 text-xs">(Optional)</span>}
                     </p>
-                    <p className="text-[11px] leading-relaxed mt-1.5" style={{ color: "rgba(147,197,253,0.5)" }}>
+                    <p className="text-[10px] mt-1" style={{ color: "rgba(147,197,253,0.45)" }}>
                       {isLetterRequired
-                        ? "2028/2029 batch மாணவர்களுக்கு பெற்றோர் கையொப்பமிட்ட கடிதம் கட்டாயம். PDF, JPG அல்லது PNG upload பண்ணுங்க."
-                        : "2026/2027 batch-க்கு letter optional. Skip பண்ணலாம்."}
+                        ? "2028/2029 batch-க்கு கட்டாயம் upload பண்ணணும்"
+                        : "2026/2027 batch-க்கு optional — skip பண்ணலாம்"}
                     </p>
                   </div>
 
+                  {/* Allowed formats badge */}
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    {["PDF", "JPG", "PNG", "DOC"].map(fmt => (
+                      <span key={fmt} className="text-[9px] px-2 py-0.5 rounded-full font-bold"
+                        style={{ background: "rgba(34,197,94,0.1)", color: "#86efac", border: "1px solid rgba(34,197,94,0.2)" }}>
+                        ✓ {fmt}
+                      </span>
+                    ))}
+                    <span className="text-[9px] px-2 py-0.5 rounded-full font-bold"
+                      style={{ background: "rgba(239,68,68,0.1)", color: "#fca5a5", border: "1px solid rgba(239,68,68,0.2)" }}>
+                      ✗ MP4/GIF/Random
+                    </span>
+                  </div>
+
+                  {/* File chosen — preview */}
                   {letterFile ? (
-                    <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
-                      style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.2)" }}>
-                      <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
-                      <span className="flex-1 truncate text-[12px] font-medium text-white text-left">{letterFile.name}</span>
-                      <button type="button" onClick={() => setLetterFile(null)}
-                        className="w-6 h-6 rounded-full flex items-center justify-center transition-colors"
-                        style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>
-                        <X className="w-3 h-3" />
-                      </button>
+                    <div className="space-y-2">
+                      {/* Image preview */}
+                      {letterPreviewUrl && (letterFile.type.startsWith("image/")) && (
+                        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                          className="relative rounded-2xl overflow-hidden"
+                          style={{ border: "1px solid rgba(34,197,94,0.3)", maxHeight: "200px" }}>
+                          <img src={letterPreviewUrl} alt="Letter preview"
+                            className="w-full object-contain"
+                            style={{ maxHeight: "200px", background: "#fff" }} />
+                          <div className="absolute top-2 right-2">
+                            <span className="text-[9px] px-2 py-1 rounded-full font-bold"
+                              style={{ background: "rgba(34,197,94,0.85)", color: "#fff" }}>
+                              Preview
+                            </span>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* PDF icon preview */}
+                      {letterFile.type === "application/pdf" && (
+                        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                          className="flex items-center gap-3 p-3 rounded-2xl"
+                          style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
+                          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                            style={{ background: "rgba(239,68,68,0.15)" }}>
+                            <FileText className="w-5 h-5 text-red-400" />
+                          </div>
+                          <div className="flex-1 text-left">
+                            <p className="text-[11px] font-bold text-white truncate">{letterFile.name}</p>
+                            <p className="text-[9px]" style={{ color: "rgba(147,197,253,0.5)" }}>
+                              PDF Document • {(letterFile.size / 1024).toFixed(0)} KB
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {/* File info + remove */}
+                      <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                        style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)" }}>
+                        <Check className="w-4 h-4 text-green-400 flex-shrink-0" />
+                        <span className="flex-1 truncate text-[11px] font-medium text-white text-left">{letterFile.name}</span>
+                        <button type="button" onClick={() => { setLetterFile(null); setLetterPreviewUrl(null); }}
+                          className="w-6 h-6 rounded-full flex items-center justify-center"
+                          style={{ background: "rgba(239,68,68,0.15)", color: "#f87171" }}>
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <label className="cursor-pointer block">
-                      <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) { setLetterFile(f); setError(""); } }} />
+                      <input type="file"
+                        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                        className="hidden"
+                        onChange={e => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+
+                          // ── Fake file check ──
+                          const allowed = ["application/pdf","image/jpeg","image/png","application/msword",
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+                          const allowedExt = [".pdf",".jpg",".jpeg",".png",".doc",".docx"];
+                          const ext = "." + f.name.split(".").pop()?.toLowerCase();
+
+                          if (!allowed.includes(f.type) || !allowedExt.includes(ext)) {
+                            setError("❌ தவறான file வகை! PDF, JPG, PNG அல்லது DOC மட்டும் upload பண்ணுங்க.");
+                            e.target.value = "";
+                            return;
+                          }
+                          // Max 5MB
+                          if (f.size > 5 * 1024 * 1024) {
+                            setError("❌ File size 5MB-ஐ விட அதிகமாக இருக்கக்கூடாது.");
+                            e.target.value = "";
+                            return;
+                          }
+
+                          setLetterFile(f);
+                          setError("");
+
+                          // Generate preview URL for images
+                          if (f.type.startsWith("image/")) {
+                            const url = URL.createObjectURL(f);
+                            setLetterPreviewUrl(url);
+                          } else {
+                            setLetterPreviewUrl(null);
+                          }
+                        }} />
                       <motion.div whileTap={{ scale: 0.97 }}
                         className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl font-semibold text-sm"
                         style={{
@@ -519,10 +641,11 @@ export default function SignUpPage({ onBack }: Props) {
                 </div>
               </div>
 
+              {/* Info note */}
               <div className="flex items-start gap-2.5 px-1">
-                <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: "rgba(147,197,253,0.35)" }} />
+                <ShieldCheck className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-blue-400 opacity-50" />
                 <p className="text-[10px] leading-relaxed" style={{ color: "rgba(147,197,253,0.4)" }}>
-                  This letter will be reviewed by the admin before your account is fully approved.
+                  இந்த கடிதம் admin-ஆல் review செய்யப்படும். Account approve ஆவதற்கு முன்பு verify பண்ணப்படும்.
                 </p>
               </div>
             </motion.div>

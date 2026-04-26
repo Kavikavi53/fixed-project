@@ -9,6 +9,26 @@ import AdminDashboard from "@/components/AdminDashboard";
 import StudentDashboard from "@/components/StudentDashboard";
 import FooterBar from "@/components/FooterBar";
 
+// Auto-retry loader — click to refresh இல்லாம automatically retry பண்ணும்
+function ProfileSetupLoader({ onRetry, lang }: { onRetry: () => void; lang: "en" | "ta" }) {
+  useEffect(() => {
+    // 2s, 4s, 8s, 15s — exponential retry
+    const timers = [2000, 4000, 8000, 15000].map((ms) =>
+      setTimeout(() => onRetry(), ms)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [onRetry]);
+
+  return (
+    <div className="flex flex-col items-center justify-center h-64 gap-4 text-muted-foreground px-4 text-center">
+      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      <p className="text-sm">
+        {lang === "en" ? "Setting up your profile..." : "உங்கள் profile தயாராகிறது..."}
+      </p>
+    </div>
+  );
+}
+
 export default function Index() {
   const { accessGranted, user, loading: authLoading, verifyAccessCode, login, logout } = useAuth();
   const store = useStore();
@@ -19,12 +39,12 @@ export default function Index() {
   useEffect(() => {
     if (user?.role === "admin") {
       runAutoPaymentLogic(true).then(() => {
-        // Logic run ஆன பிறகு data refresh
         setTimeout(() => store.fetchAll(), 1000);
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role]);
+
 
   if (!accessGranted) return <AccessCodePage onVerify={verifyAccessCode} lang={lang} />;
 
@@ -84,12 +104,7 @@ export default function Index() {
             lang={lang}
           />
         ) : (
-          <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground px-4 text-center">
-            <p className="text-sm">{lang === "en" ? "Setting up your profile... Please wait." : "உங்கள் profile தயாராகிறது... காத்திருங்கள்."}</p>
-            <button onClick={() => store.fetchAll()} className="text-sm text-primary underline hover:no-underline">
-              {lang === "en" ? "Click here to refresh" : "புதுப்பிக்க இங்கே கிளிக் பண்ணுங்க"}
-            </button>
-          </div>
+          <ProfileSetupLoader onRetry={() => store.fetchAll()} lang={lang} />
         )}
       </div>
 

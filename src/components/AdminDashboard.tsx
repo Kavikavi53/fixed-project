@@ -1,11 +1,12 @@
- import { useState, useMemo } from "react";
+ import { useState, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, DollarSign, AlertTriangle, CheckCircle, Search,
   Plus, Trash2, ShieldAlert, ShieldCheck, Megaphone, ClipboardList, Pencil, FileDown,
-  FileText, Upload, X, Filter,
+  FileText, Upload, X, Filter, Zap, Bell,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -66,6 +67,63 @@ export default function AdminDashboard({
   const [confirmBlock, setConfirmBlock] = useState<Student | null>(null);
   const [confirmEdit, setConfirmEdit] = useState<Student | null>(null);
   const [confirmPayment, setConfirmPayment] = useState<{ student: Student; status: PaymentStatus } | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+
+  // Flash highlight helper — row-ஐ briefly highlight பண்ணும்
+  const flashRow = useCallback((id: string) => {
+    setFlashId(id);
+    setTimeout(() => setFlashId(null), 1500);
+  }, []);
+
+  // Real-time payment update with toast + flash
+  const handlePaymentUpdate = useCallback(async (student: Student, status: PaymentStatus) => {
+    setProcessingId(student.id);
+    const statusLabel = status === "paid" ? "✅ Paid" : status === "pending" ? "⏳ Pending" : "⚠️ Late";
+    const toastId = toast.loading(`Updating ${student.full_name}...`);
+    try {
+      await onUpdatePayment(student.id, status);
+      flashRow(student.id);
+      toast.success(`${student.full_name} → ${statusLabel}`, {
+        id: toastId,
+        description: new Date().toLocaleTimeString(),
+        duration: 3000,
+      });
+    } catch {
+      toast.error("Update failed. Try again.", { id: toastId });
+    } finally {
+      setProcessingId(null);
+    }
+  }, [onUpdatePayment, flashRow]);
+
+  // Real-time announcement add with toast
+  const handleAddAnnouncement = useCallback(async () => {
+    if (!annTitle.trim() || !annMsg.trim()) {
+      toast.error("Title and message required!");
+      return;
+    }
+    const toastId = toast.loading("Posting announcement...");
+    try {
+      await onAddAnnouncement(annTitle, annMsg, annUrgent);
+      setAnnTitle(""); setAnnMsg(""); setAnnUrgent(false);
+      toast.success(annUrgent ? "🚨 Urgent announcement posted!" : "📢 Announcement posted!", {
+        id: toastId, duration: 3000,
+      });
+    } catch {
+      toast.error("Failed to post. Try again.", { id: toastId });
+    }
+  }, [annTitle, annMsg, annUrgent, onAddAnnouncement]);
+
+  // Real-time announcement delete with toast
+  const handleDeleteAnnouncement = useCallback(async (id: string, title: string) => {
+    const toastId = toast.loading("Deleting...");
+    try {
+      await onDeleteAnnouncement(id);
+      toast.success(`"${title}" deleted`, { id: toastId, duration: 2000 });
+    } catch {
+      toast.error("Delete failed.", { id: toastId });
+    }
+  }, [onDeleteAnnouncement]);
   const [newStudent, setNewStudent] = useState({
     full_name: "", address: "", dob: "", nic: "", email: "",
     school_id: "", batch: "2026" as Batch, stream: "Mathematics" as Stream,
@@ -139,11 +197,7 @@ export default function AdminDashboard({
     setNewStudent({ full_name: "", address: "", dob: "", nic: "", email: "", school_id: "", batch: "2026", stream: "Mathematics", student_phone: "", parent_name: "", parent_phone: "" });
   };
 
-  const handleAddAnnouncement = async () => {
-    if (!annTitle || !annMsg) return;
-    await onAddAnnouncement(annTitle, annMsg, annUrgent);
-    setAnnTitle(""); setAnnMsg(""); setAnnUrgent(false);
-  };
+  const handleAddStudentAnnouncement_removed = null; // replaced by useCallback above
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -334,7 +388,8 @@ export default function AdminDashboard({
                 <tbody>
                   {filtered.map((s, i) => (
                     <motion.tr key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}
-                      className="border-b border-border/40 hover:bg-secondary/30 transition-colors">
+                      className="border-b border-border/40 hover:bg-secondary/30 transition-colors"
+                      style={{ background: flashId === s.id ? "rgba(34,197,94,0.12)" : undefined, transition: "background 0.5s" }}>
                       <td className="p-3 font-mono text-xs text-muted-foreground">{s.auto_id}</td>
                       <td className="p-3 cursor-pointer" onClick={() => navigate(`/student/${s.id}`)}>
                         <div className="flex items-center gap-2">
@@ -447,7 +502,7 @@ export default function AdminDashboard({
                     <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{a.message}</p>
                     <p className="text-[10px] text-muted-foreground/60 mt-2">{new Date(a.created_at).toLocaleString()}</p>
                   </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive flex-shrink-0" onClick={() => onDeleteAnnouncement(a.id)}>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive flex-shrink-0" onClick={() => handleDeleteAnnouncement(a.id, a.title)}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -500,7 +555,7 @@ export default function AdminDashboard({
           </AlertDialogHeader>
           <AlertDialogFooter className="flex-row gap-2">
             <AlertDialogCancel className="flex-1">{T(lang,"Cancel","ரத்து")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { onUpdatePayment(confirmPayment!.student.id, confirmPayment!.status); setConfirmPayment(null); }}
+            <AlertDialogAction onClick={() => { handlePaymentUpdate(confirmPayment!.student, confirmPayment!.status); setConfirmPayment(null); }}
               className="flex-1 gradient-primary text-primary-foreground">{T(lang,"Confirm","உறுதிப்படுத்து")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

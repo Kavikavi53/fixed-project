@@ -56,12 +56,13 @@ export function useAuth() {
         }
       }
 
-      if (!studentId && retryCount < 5) {
+      if (!studentId && retryCount < 8) {
         retryRef.current = setTimeout(() => {
           resolveRole(user, retryCount + 1);
-        }, 1000);
+        }, 800);
         return;
       }
+      // 8 retry-க்கு பிறகும் studentId இல்லாட்டா still setAppUser — Index.tsx handle பண்ணும்
     }
 
     setAppUser({
