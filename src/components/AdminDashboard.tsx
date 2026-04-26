@@ -1,10 +1,10 @@
- import { useState, useMemo, useRef, useCallback } from "react";
+ import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, DollarSign, AlertTriangle, CheckCircle, Search,
   Plus, Trash2, ShieldAlert, ShieldCheck, Megaphone, ClipboardList, Pencil, FileDown,
-  FileText, Upload, X, Filter, Zap, Bell,
+  FileText, Upload, X, Filter, Zap, Bell, CheckCircle2, XCircle, Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -70,6 +70,42 @@ export default function AdminDashboard({
   const [flashId, setFlashId] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
 
+  // Edit Requests from students
+  const [editRequests, setEditRequests] = useState<any[]>([]);
+  const [processingReqId, setProcessingReqId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadEditRequests = async () => {
+      const { data } = await supabase
+        .from("audit_log")
+        .select("*")
+        .eq("action", "EDIT_REQUEST")
+        .order("created_at", { ascending: false });
+      if (data) {
+        const parsed = data.map(row => {
+          try { const details = JSON.parse(row.details ?? "{}"); return { ...row, parsed: details }; }
+          catch { return { ...row, parsed: {} }; }
+        }).filter((r: any) => r.parsed?.status === "pending");
+        setEditRequests(parsed);
+      }
+    };
+    loadEditRequests();
+    const channel = supabase
+      .channel("edit-requests-admin")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "audit_log" }, (payload: any) => {
+        if (payload.new?.action === "EDIT_REQUEST") {
+          try {
+            const details = JSON.parse(payload.new.details ?? "{}");
+            if (details.status === "pending") setEditRequests(prev => [{ ...payload.new, parsed: details }, ...prev]);
+          } catch {}
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const pendingEditCount = editRequests.filter((r: any) => r.parsed?.status === "pending").length;
+
   // Flash highlight helper — row-ஐ briefly highlight பண்ணும்
   const flashRow = useCallback((id: string) => {
     setFlashId(id);
@@ -96,6 +132,29 @@ export default function AdminDashboard({
     }
   }, [onUpdatePayment, flashRow]);
 
+
+  const handleApproveEditRequest = useCallback(async (req: any) => {
+    setProcessingReqId(req.id);
+    try {
+      const fields = req.parsed?.fields ?? {};
+      await onUpdateStudent(req.parsed.student_id, fields);
+      // Mark as approved in audit_log
+      await supabase.from("audit_log").update({ details: JSON.stringify({ ...req.parsed, status: "approved" }) }).eq("id", req.id);
+      setEditRequests(prev => prev.filter((r: any) => r.id !== req.id));
+      toast.success(`Edit approved for ${req.parsed.student_name}`);
+    } catch { toast.error("Failed to approve edit request"); }
+    setProcessingReqId(null);
+  }, [onUpdateStudent]);
+
+  const handleRejectEditRequest = useCallback(async (req: any) => {
+    setProcessingReqId(req.id);
+    try {
+      await supabase.from("audit_log").update({ details: JSON.stringify({ ...req.parsed, status: "rejected" }) }).eq("id", req.id);
+      setEditRequests(prev => prev.filter((r: any) => r.id !== req.id));
+      toast.success(`Edit request rejected for ${req.parsed.student_name}`);
+    } catch { toast.error("Failed to reject edit request"); }
+    setProcessingReqId(null);
+  }, []);
   // Real-time announcement add with toast
   const handleAddAnnouncement = useCallback(async () => {
     if (!annTitle.trim() || !annMsg.trim()) {
@@ -251,7 +310,7 @@ export default function AdminDashboard({
 
       {/* Tabs */}
       <Tabs defaultValue="students" className="space-y-3">
-        <TabsList className="glass-card border-border/50 w-full grid grid-cols-4 h-10">
+        <TabsList className="glass-card border-border/50 w-full grid grid-cols-5 h-10">
           <TabsTrigger value="students" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Users className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Students", "மாணவர்")}
           </TabsTrigger>
@@ -263,6 +322,10 @@ export default function AdminDashboard({
           </TabsTrigger>
           <TabsTrigger value="audit" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <ClipboardList className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Log", "பதிவு")}
+          </TabsTrigger>
+          <TabsTrigger value="editrequests" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground relative">
+            <Pencil className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Edits", "திருத்தம்")}
+            {pendingEditCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[9px] font-black rounded-full flex items-center justify-center">{pendingEditCount}</span>}
           </TabsTrigger>
         </TabsList>
 
@@ -536,6 +599,60 @@ export default function AdminDashboard({
                 </div>
               ))}
               {audit.length === 0 && <p className="text-center text-muted-foreground py-10 text-sm">{T(lang,"No actions recorded","செயல்கள் பதிவு இல்லை")}</p>}
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* EDIT REQUESTS */}
+        <TabsContent value="editrequests">
+          <div className="glass-card rounded-2xl overflow-hidden">
+            <div className="p-4 border-b border-border flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-primary" />
+              <h3 className="font-semibold text-foreground text-sm">{T(lang,"Student Edit Requests","மாணவர் திருத்த கோரிக்கைகள்")}</h3>
+              {pendingEditCount > 0 && <span className="ml-auto text-xs bg-amber-500/15 text-amber-600 px-2 py-0.5 rounded-full font-semibold">{pendingEditCount} {T(lang,"pending","நிலுவை")}</span>}
+            </div>
+            <div className="divide-y divide-border/40 max-h-[32rem] overflow-y-auto">
+              {editRequests.length === 0 && <p className="text-center text-muted-foreground py-10 text-sm">{T(lang,"No pending edit requests","திருத்த கோரிக்கைகள் இல்லை")}</p>}
+              {editRequests.map((req: any) => {
+                const fields = req.parsed?.fields ?? {};
+                const student = students.find((s: any) => s.id === req.parsed?.student_id);
+                const isProcessing = processingReqId === req.id;
+                return (
+                  <div key={req.id} className="p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-bold text-foreground">{req.parsed?.student_name ?? "Unknown"}</p>
+                        <p className="text-xs font-mono text-primary">{req.parsed?.student_auto_id}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{new Date(req.created_at).toLocaleString()}</p>
+                      </div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-600 px-2 py-1 rounded-full flex-shrink-0">{T(lang,"Pending","நிலுவை")}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5 text-xs bg-secondary/60 rounded-xl p-3">
+                      {Object.entries(fields).map(([key, val]: [string, any]) => {
+                        const cur = (student as any)?.[key];
+                        const changed = cur !== val && val !== "";
+                        return (
+                          <div key={key} className={`flex flex-col gap-0.5 p-1.5 rounded-lg ${changed ? "bg-amber-500/10" : ""}`}>
+                            <span className="text-[9px] uppercase tracking-wider text-muted-foreground font-bold">{key.replace(/_/g," ")}</span>
+                            {changed && <span className="text-muted-foreground line-through text-[10px]">{cur || "-"}</span>}
+                            <span className={`font-semibold ${changed ? "text-amber-600" : "text-foreground"}`}>{val || "-"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => handleApproveEditRequest(req)} disabled={isProcessing}
+                        className="flex-1 h-9 gradient-primary text-primary-foreground text-xs rounded-xl">
+                        <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />{isProcessing ? T(lang,"Processing...","செயலாக்குகிறது...") : T(lang,"Approve & Update","Approve & Update")}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => handleRejectEditRequest(req)} disabled={isProcessing}
+                        className="flex-1 h-9 text-xs rounded-xl border-destructive/30 text-destructive hover:bg-destructive/10">
+                        <XCircle className="w-3.5 h-3.5 mr-1.5" />{T(lang,"Reject","நிராகரி")}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </TabsContent>
