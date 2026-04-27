@@ -1,40 +1,44 @@
 /**
- * ChatWindow.tsx — Pro-Level Real-Time Chat
- * Uses Supabase Realtime BROADCAST (no database table required)
- * Messages persist in localStorage per student channel
+ * ChatWindow.tsx — Ultra Pro Max Real-Time Chat
  *
- * Admin: <ChatWindow studentId={id} studentName={name} role="admin" userId={uid} lang={lang} />
- * Student: <ChatWindow studentId={id} studentName={name} role="student" userId={uid} lang={lang} floating />
+ * FIXES:
+ * 1. Messages isolated per-student channel (student A msg never in student B chat)
+ * 2. Offline queue — messages auto-send when reconnected
+ * 3. Per-student unread badge API (admin sidebar)
+ * 4. Real-time toast notifications
+ * 5. WhatsApp-style: sending/sent/delivered/read status icons
+ * 6. Auto-reconnect on disconnect
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send, X, MessageCircle, CheckCheck, Clock, Loader2,
+  Send, X, MessageCircle, CheckCheck, Check, Clock, Loader2,
   Edit3, HelpCircle, Phone, User2, ChevronDown,
-  Wifi, WifiOff, Trash2,
+  Wifi, WifiOff, Trash2, AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 type MsgType   = "text" | "edit_request" | "doubt" | "contact_request";
 type Role      = "admin" | "student";
 type ConnState = "connecting" | "connected" | "disconnected";
+type DeliveryStatus = "sending" | "sent" | "delivered" | "read";
 
-interface Message {
+export interface Message {
   id: string;
   senderId: string;
   senderRole: Role;
+  studentId: string; // KEY: isolate per student
   text: string;
   type: MsgType;
-  isRead: boolean;
-  ts: number; // epoch ms
+  deliveryStatus: DeliveryStatus;
+  ts: number;
 }
 
-interface Props {
+export interface Props {
   studentId: string;
   studentName: string;
   role: Role;
@@ -42,11 +46,10 @@ interface Props {
   lang?: "en" | "ta";
   onClose?: () => void;
   floating?: boolean;
+  onUnreadChange?: (studentId: string, count: number) => void;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 const L = (lang: "en" | "ta", en: string, ta: string) => lang === "en" ? en : ta;
-
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 const MSG_META: Record<MsgType, { en: string; ta: string; Icon: React.ElementType; badge: string }> = {
@@ -56,13 +59,46 @@ const MSG_META: Record<MsgType, { en: string; ta: string; Icon: React.ElementTyp
   contact_request: { en: "Contact Admin", ta: "Admin தொடர்பு",  Icon: Phone,         badge: "bg-rose-500/10 text-rose-600" },
 };
 
+// ── LocalStorage helpers (keyed by studentId) ─────────────────────────────────
+const STORAGE_KEY = (sid: string) => `amv_chat_msgs_${sid}`;
+const QUEUE_KEY   = (sid: string) => `amv_chat_queue_${sid}`;
+const UNREAD_KEY  = (sid: string) => `amv_chat_unread_${sid}`;
+
+function loadMessages(sid: string): Message[] {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY(sid)) ?? "[]"); } catch { return []; }
+}
+function saveMessages(sid: string, msgs: Message[]) {
+  try { localStorage.setItem(STORAGE_KEY(sid), JSON.stringify(msgs.slice(-300))); } catch {}
+}
+function clearMessages(sid: string) {
+  try { localStorage.removeItem(STORAGE_KEY(sid)); } catch {}
+}
+function loadQueue(sid: string): Message[] {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY(sid)) ?? "[]"); } catch { return []; }
+}
+function saveQueue(sid: string, q: Message[]) {
+  try { localStorage.setItem(QUEUE_KEY(sid), JSON.stringify(q)); } catch {}
+}
+function clearQueue(sid: string) {
+  try { localStorage.removeItem(QUEUE_KEY(sid)); } catch {}
+}
+export function getUnreadCount(sid: string): number {
+  try { return parseInt(localStorage.getItem(UNREAD_KEY(sid)) ?? "0", 10); } catch { return 0; }
+}
+function setUnreadCount(sid: string, n: number) {
+  try { localStorage.setItem(UNREAD_KEY(sid), String(Math.max(0, n))); } catch {}
+}
+function clearUnreadCount(sid: string) {
+  try { localStorage.removeItem(UNREAD_KEY(sid)); } catch {}
+}
+
+// ── Time helpers ──────────────────────────────────────────────────────────────
 function fmtTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 function fmtDate(ts: number) {
-  const d = new Date(ts);
-  const today = new Date();
-  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  const d = new Date(ts), today = new Date(), yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   return d.toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
@@ -78,29 +114,22 @@ function groupByDate(msgs: Message[]) {
   return groups;
 }
 
-// LocalStorage persistence
-const STORAGE_KEY = (sid: string) => `amv_chat_${sid}`;
-function loadMessages(sid: string): Message[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY(sid)) ?? "[]"); }
-  catch { return []; }
-}
-function saveMessages(sid: string, msgs: Message[]) {
-  // Keep last 200 messages only
-  const trimmed = msgs.slice(-200);
-  try { localStorage.setItem(STORAGE_KEY(sid), JSON.stringify(trimmed)); } catch {}
-}
-function clearMessages(sid: string) {
-  try { localStorage.removeItem(STORAGE_KEY(sid)); } catch {}
+// ── Delivery icon (WhatsApp style) ────────────────────────────────────────────
+function DeliveryIcon({ status }: { status: DeliveryStatus }) {
+  if (status === "sending")   return <Clock className="w-3 h-3 text-muted-foreground/40" />;
+  if (status === "sent")      return <Check className="w-3 h-3 text-muted-foreground/60" />;
+  if (status === "delivered") return <CheckCheck className="w-3 h-3 text-muted-foreground/60" />;
+  return <CheckCheck className="w-3 h-3 text-primary" />;
 }
 
-// ─── Bubble ───────────────────────────────────────────────────────────────────
+// ── Message Bubble ────────────────────────────────────────────────────────────
 function Bubble({ msg, isMine, lang }: { msg: Message; isMine: boolean; lang: "en" | "ta" }) {
   const { Icon, badge, en, ta } = MSG_META[msg.type];
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+      initial={{ opacity: 0, y: 8, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 440, damping: 32 }}
+      transition={{ type: "spring", stiffness: 480, damping: 34 }}
       className={`flex ${isMine ? "justify-end" : "justify-start"} mb-1.5`}
     >
       {!isMine && (
@@ -108,24 +137,20 @@ function Bubble({ msg, isMine, lang }: { msg: Message; isMine: boolean; lang: "e
           <User2 className="w-3.5 h-3.5 text-white" />
         </div>
       )}
-      <div className={`max-w-[76%] flex flex-col gap-0.5 ${isMine ? "items-end" : "items-start"}`}>
+      <div className={`max-w-[78%] flex flex-col gap-0.5 ${isMine ? "items-end" : "items-start"}`}>
         {msg.type !== "text" && (
           <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge} ${isMine ? "self-end" : "self-start"}`}>
-            <Icon className="w-2.5 h-2.5" />
-            {L(lang, en, ta)}
+            <Icon className="w-2.5 h-2.5" />{L(lang, en, ta)}
           </span>
         )}
-        <div className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-          isMine
-            ? "bg-primary text-primary-foreground rounded-br-sm"
-            : "bg-secondary text-secondary-foreground rounded-bl-sm"
+        <div className={`px-3.5 py-2 rounded-2xl text-sm leading-relaxed shadow-sm ${
+          isMine ? "bg-primary text-primary-foreground rounded-br-sm" : "bg-secondary text-secondary-foreground rounded-bl-sm"
         }`}>
           {msg.text}
         </div>
         <div className={`flex items-center gap-1 text-[10px] text-muted-foreground ${isMine ? "justify-end" : "justify-start"}`}>
-          <Clock className="w-2.5 h-2.5" />
-          {fmtTime(msg.ts)}
-          {isMine && <CheckCheck className={`w-3 h-3 ml-0.5 ${msg.isRead ? "text-primary" : "text-muted-foreground/40"}`} />}
+          <span>{fmtTime(msg.ts)}</span>
+          {isMine && <DeliveryIcon status={msg.deliveryStatus} />}
         </div>
       </div>
     </motion.div>
@@ -135,58 +160,100 @@ function Bubble({ msg, isMine, lang }: { msg: Message; isMine: boolean; lang: "e
 function TypingDots() {
   return (
     <div className="flex items-center gap-1.5 px-3.5 py-2.5 bg-secondary rounded-2xl rounded-bl-sm w-fit ml-9 mb-2">
-      {[0,1,2].map(i => (
+      {[0, 1, 2].map(i => (
         <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50"
           animate={{ y: [0, -5, 0] }}
-          transition={{ repeat: Infinity, duration: 0.85, delay: i * 0.16 }}
-        />
+          transition={{ repeat: Infinity, duration: 0.85, delay: i * 0.16 }} />
       ))}
     </div>
   );
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 export default function ChatWindow({
-  studentId, studentName, role, userId, lang = "en", onClose, floating = false,
+  studentId, studentName, role, userId, lang = "en", onClose, floating = false, onUnreadChange,
 }: Props) {
-  const [messages, setMessages]     = useState<Message[]>(() => loadMessages(studentId));
-  const [input, setInput]           = useState("");
-  const [msgType, setMsgType]       = useState<MsgType>("text");
-  const [sending, setSending]       = useState(false);
-  const [open, setOpen]             = useState(!floating);
-  const [unread, setUnread]         = useState(0);
-  const [conn, setConn]             = useState<ConnState>("connecting");
-  const [peerTyping, setPeerTyping] = useState(false);
-  const [showDown, setShowDown]     = useState(false);
+  const [messages, setMessages]         = useState<Message[]>(() => loadMessages(studentId));
+  const [input, setInput]               = useState("");
+  const [msgType, setMsgType]           = useState<MsgType>("text");
+  const [sending, setSending]           = useState(false);
+  const [open, setOpen]                 = useState(!floating);
+  const [unread, setUnread]             = useState(0);
+  const [conn, setConn]                 = useState<ConnState>("connecting");
+  const [peerTyping, setPeerTyping]     = useState(false);
+  const [showDown, setShowDown]         = useState(false);
+  const [offlineQueue, setOfflineQueue] = useState<Message[]>(() => loadQueue(studentId));
 
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const scrollRef  = useRef<HTMLDivElement>(null);
-  const channelRef = useRef<any>(null);
+  const bottomRef   = useRef<HTMLDivElement>(null);
+  const scrollRef   = useRef<HTMLDivElement>(null);
+  const channelRef  = useRef<any>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isOpenRef   = useRef(open);
+  isOpenRef.current = open;
 
-  // Channel name — same for both sides
-  const CHANNEL = `amv_chat_${studentId}`;
+  const CHANNEL = `amv_chat_v2_${studentId}`;
 
-  // ── Subscribe ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const ch = supabase.channel(CHANNEL, {
-      config: { broadcast: { self: false, ack: false } },
+  const updateMessages = useCallback((updater: (prev: Message[]) => Message[]) => {
+    setMessages(prev => {
+      const next = updater(prev);
+      saveMessages(studentId, next);
+      return next;
     });
+  }, [studentId]);
+
+  const flushQueue = useCallback(async (ch: any) => {
+    const q = loadQueue(studentId);
+    if (!q.length) return;
+    clearQueue(studentId);
+    setOfflineQueue([]);
+    for (const msg of q) {
+      const sent = { ...msg, deliveryStatus: "sent" as DeliveryStatus };
+      try {
+        await ch.send({ type: "broadcast", event: "message", payload: sent });
+        updateMessages(prev => prev.map(m => m.id === msg.id ? sent : m));
+      } catch {
+        setOfflineQueue(prev => { const nq = [...prev, msg]; saveQueue(studentId, nq); return nq; });
+      }
+    }
+  }, [studentId, updateMessages]);
+
+  const subscribe = useCallback(() => {
+    if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; }
+    if (reconnTimer.current) { clearTimeout(reconnTimer.current); reconnTimer.current = null; }
+    setConn("connecting");
+
+    const ch = supabase.channel(CHANNEL, { config: { broadcast: { self: false, ack: false } } });
 
     ch.on("broadcast", { event: "message" }, ({ payload }: { payload: Message }) => {
-      setMessages(prev => {
+      // KEY FIX: Only process messages for THIS student
+      if (payload.studentId !== studentId) return;
+      
+      updateMessages(prev => {
         if (prev.some(m => m.id === payload.id)) return prev;
-        const updated = [...prev, payload];
-        saveMessages(studentId, updated);
-        return updated;
+        return [...prev, { ...payload, deliveryStatus: "delivered" }];
       });
-      if (floating && !open && payload.senderRole !== role) {
-        setUnread(u => u + 1);
+
+      // Send delivery receipt back
+      ch.send({ type: "broadcast", event: "delivered", payload: { msgId: payload.id, role } });
+
+      if (payload.senderRole !== role) {
+        if (!isOpenRef.current) {
+          setUnread(u => u + 1);
+          const cur = getUnreadCount(studentId);
+          setUnreadCount(studentId, cur + 1);
+          onUnreadChange?.(studentId, cur + 1);
+          const label = role === "admin" ? studentName : "Admin";
+          toast(`💬 ${label}`, {
+            description: payload.text.slice(0, 70) + (payload.text.length > 70 ? "…" : ""),
+            duration: 5000,
+          });
+        }
       }
-      setPeerTyping(false);
     });
 
-    ch.on("broadcast", { event: "typing" }, ({ payload }: { payload: { role: Role } }) => {
+    ch.on("broadcast", { event: "typing" }, ({ payload }: { payload: { role: Role; studentId: string } }) => {
+      if (payload.studentId !== studentId) return;
       if (payload.role !== role) {
         setPeerTyping(true);
         if (typingTimer.current) clearTimeout(typingTimer.current);
@@ -194,95 +261,114 @@ export default function ChatWindow({
       }
     });
 
-    ch.on("broadcast", { event: "read" }, ({ payload }: { payload: { role: Role } }) => {
+    ch.on("broadcast", { event: "delivered" }, ({ payload }: { payload: { msgId: string; role: Role } }) => {
       if (payload.role !== role) {
-        setMessages(prev => {
-          const updated = prev.map(m => m.senderRole === role ? { ...m, isRead: true } : m);
-          saveMessages(studentId, updated);
-          return updated;
-        });
+        updateMessages(prev =>
+          prev.map(m => m.id === payload.msgId && m.deliveryStatus === "sent" ? { ...m, deliveryStatus: "delivered" } : m)
+        );
       }
     });
 
-    ch.on("broadcast", { event: "clear" }, () => {
-      setMessages([]);
-      clearMessages(studentId);
+    ch.on("broadcast", { event: "read" }, ({ payload }: { payload: { role: Role; studentId: string } }) => {
+      if (payload.studentId !== studentId) return;
+      if (payload.role !== role) {
+        updateMessages(prev => prev.map(m => m.senderRole === role ? { ...m, deliveryStatus: "read" } : m));
+      }
     });
 
-    ch.subscribe(status => {
-      if (status === "SUBSCRIBED")    setConn("connected");
-      if (status === "CLOSED")        setConn("disconnected");
-      if (status === "CHANNEL_ERROR") setConn("disconnected");
+    ch.on("broadcast", { event: "clear" }, ({ payload }: { payload: { studentId: string } }) => {
+      if (payload.studentId !== studentId) return;
+      setMessages([]); clearMessages(studentId);
+    });
+
+    ch.subscribe(async (status: string) => {
+      if (status === "SUBSCRIBED") {
+        setConn("connected");
+        await flushQueue(ch);
+        if (isOpenRef.current) {
+          ch.send({ type: "broadcast", event: "read", payload: { role, studentId } });
+          updateMessages(prev => prev.map(m => m.senderRole !== role ? { ...m, deliveryStatus: "read" } : m));
+          setUnread(0); clearUnreadCount(studentId); onUnreadChange?.(studentId, 0);
+        }
+      }
+      if (status === "CLOSED" || status === "CHANNEL_ERROR") {
+        setConn("disconnected");
+        reconnTimer.current = setTimeout(() => subscribe(), 3500);
+      }
     });
 
     channelRef.current = ch;
-    return () => { supabase.removeChannel(ch); };
-  }, [studentId, floating, open, role, CHANNEL]);
+  }, [CHANNEL, studentId, role, studentName, flushQueue, updateMessages, onUnreadChange]);
 
-  // ── Auto-scroll ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    subscribe();
+    return () => {
+      if (channelRef.current) supabase.removeChannel(channelRef.current);
+      if (reconnTimer.current) clearTimeout(reconnTimer.current);
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+    };
+  }, [subscribe]);
+
+  // Reload when admin switches student
+  useEffect(() => {
+    setMessages(loadMessages(studentId));
+    setOfflineQueue(loadQueue(studentId));
+    setUnread(0);
+    setPeerTyping(false);
+  }, [studentId]);
+
   useEffect(() => {
     if (open) setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
-  }, [messages, open]);
+  }, [messages, open, peerTyping]);
 
-  // ── Send read receipt when window opens ─────────────────────────────────
   useEffect(() => {
     if (!open || !channelRef.current || conn !== "connected") return;
-    channelRef.current.send({ type: "broadcast", event: "read", payload: { role } });
-    setUnread(0);
-    setMessages(prev => {
-      const updated = prev.map(m => m.senderRole !== role ? { ...m, isRead: true } : m);
-      saveMessages(studentId, updated);
-      return updated;
-    });
-  }, [open, conn, role, studentId]);
+    channelRef.current.send({ type: "broadcast", event: "read", payload: { role, studentId } });
+    setUnread(0); clearUnreadCount(studentId); onUnreadChange?.(studentId, 0);
+    updateMessages(prev => prev.map(m => m.senderRole !== role ? { ...m, deliveryStatus: "read" } : m));
+  }, [open, conn, role, studentId, updateMessages, onUnreadChange]);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
-    setShowDown(scrollHeight - scrollTop - clientHeight > 100);
+    setShowDown(scrollHeight - scrollTop - clientHeight > 80);
   };
 
-  // ── Typing broadcast ────────────────────────────────────────────────────
   const broadcastTyping = useCallback(() => {
     if (!channelRef.current || conn !== "connected") return;
-    channelRef.current.send({ type: "broadcast", event: "typing", payload: { role } });
-  }, [conn, role]);
+    channelRef.current.send({ type: "broadcast", event: "typing", payload: { role, studentId } });
+  }, [conn, role, studentId]);
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    broadcastTyping();
+    setInput(e.target.value); broadcastTyping();
   };
 
-  // ── Send ────────────────────────────────────────────────────────────────
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || sending || conn !== "connected") return;
+    if (!text || sending) return;
     setSending(true);
 
     const msg: Message = {
-      id: uid(),
-      senderId: userId,
-      senderRole: role,
-      text,
-      type: msgType,
-      isRead: false,
+      id: uid(), senderId: userId, senderRole: role,
+      studentId,          // ← Every message tagged with studentId
+      text, type: msgType,
+      deliveryStatus: conn === "connected" ? "sent" : "sending",
       ts: Date.now(),
     };
 
-    // Optimistic — add locally first
-    setMessages(prev => {
-      const updated = [...prev, msg];
-      saveMessages(studentId, updated);
-      return updated;
-    });
-    setInput("");
-    setMsgType("text");
+    updateMessages(prev => [...prev, msg]);
+    setInput(""); setMsgType("text");
 
-    try {
-      await channelRef.current.send({ type: "broadcast", event: "message", payload: msg });
-    } catch (e) {
-      console.error("[Chat] send:", e);
-      toast.error(L(lang, "Send failed. Check connection.", "அனுப்பல் தோல்வி."));
+    if (conn === "connected" && channelRef.current) {
+      try {
+        await channelRef.current.send({ type: "broadcast", event: "message", payload: msg });
+      } catch {
+        toast.error(L(lang, "Send failed. Message queued.", "அனுப்பல் தோல்வி. Queue-ல் சேர்க்கப்பட்டது."));
+        setOfflineQueue(prev => { const nq = [...prev, msg]; saveQueue(studentId, nq); return nq; });
+      }
+    } else {
+      setOfflineQueue(prev => { const nq = [...prev, msg]; saveQueue(studentId, nq); return nq; });
+      toast.info(L(lang, "Offline: Message will send when reconnected.", "Offline: இணைந்தவுடன் அனுப்பப்படும்."), { duration: 3000 });
     }
     setSending(false);
   };
@@ -293,9 +379,8 @@ export default function ChatWindow({
 
   const handleClear = () => {
     if (!channelRef.current) return;
-    setMessages([]);
-    clearMessages(studentId);
-    channelRef.current.send({ type: "broadcast", event: "clear", payload: {} });
+    setMessages([]); clearMessages(studentId);
+    channelRef.current.send({ type: "broadcast", event: "clear", payload: { studentId } });
     toast.success(L(lang, "Chat cleared", "Chat அழிக்கப்பட்டது"));
   };
 
@@ -304,40 +389,39 @@ export default function ChatWindow({
     input, handleInput, msgType, setMsgType,
     sending, handleSend, handleKeyDown,
     bottomRef, scrollRef, handleScroll, showDown,
-    conn, peerTyping, handleClear,
-    onClose,
+    conn, peerTyping, handleClear, onClose, offlineQueue,
   };
 
-  // ─── Floating (student) ────────────────────────────────────────────────
   if (floating) {
     return (
       <div className="fixed bottom-6 right-4 z-50 flex flex-col items-end gap-3">
         <AnimatePresence>
           {open && (
-            <motion.div
-              key="chat-panel"
-              initial={{ opacity: 0, y: 28, scale: 0.90 }}
+            <motion.div key="chat-panel"
+              initial={{ opacity: 0, y: 28, scale: 0.88 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 28, scale: 0.90 }}
-              transition={{ type: "spring", stiffness: 340, damping: 26 }}
-              className="w-[330px] sm:w-[375px] h-[490px] rounded-3xl shadow-2xl border border-border/60 flex flex-col overflow-hidden glass-card"
+              exit={{ opacity: 0, y: 28, scale: 0.88 }}
+              transition={{ type: "spring", stiffness: 360, damping: 28 }}
+              className="w-[330px] sm:w-[380px] h-[500px] rounded-3xl shadow-2xl border border-border/60 flex flex-col overflow-hidden glass-card"
               style={{ backdropFilter: "blur(24px)" }}
             >
               <ChatBody {...bodyProps} onClose={() => setOpen(false)} />
             </motion.div>
           )}
         </AnimatePresence>
-
-        {/* FAB */}
         <motion.button
-          whileTap={{ scale: 0.86 }} whileHover={{ scale: 1.07 }}
-          onClick={() => { setOpen(v => !v); if (!open) setUnread(0); }}
+          whileTap={{ scale: 0.84 }} whileHover={{ scale: 1.08 }}
+          onClick={() => {
+            const next = !open;
+            setOpen(next);
+            if (next) { setUnread(0); clearUnreadCount(studentId); onUnreadChange?.(studentId, 0); }
+          }}
           className="w-14 h-14 rounded-full gradient-primary shadow-2xl flex items-center justify-center relative"
         >
           <AnimatePresence mode="wait">
             {open
-              ? <motion.div key="x" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.16 }}><X className="w-5 h-5 text-white" /></motion.div>
-              : <motion.div key="c" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.16 }}><MessageCircle className="w-6 h-6 text-white" /></motion.div>
+              ? <motion.div key="x" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}><X className="w-5 h-5 text-white" /></motion.div>
+              : <motion.div key="c" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}><MessageCircle className="w-6 h-6 text-white" /></motion.div>
             }
           </AnimatePresence>
           <AnimatePresence>
@@ -353,7 +437,6 @@ export default function ChatWindow({
     );
   }
 
-  // ─── Inline (admin) ────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full min-h-[420px] rounded-2xl border border-border/50 overflow-hidden glass-card">
       <ChatBody {...bodyProps} />
@@ -361,51 +444,34 @@ export default function ChatWindow({
   );
 }
 
-// ─── ChatBody ─────────────────────────────────────────────────────────────────
+// ── ChatBody ──────────────────────────────────────────────────────────────────
 interface BodyProps {
-  messages: Message[];
-  role: Role;
-  userId: string;
-  studentName: string;
-  lang: "en" | "ta";
-  input: string;
-  handleInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
-  msgType: MsgType;
-  setMsgType: (v: MsgType) => void;
-  sending: boolean;
-  handleSend: () => void;
-  handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
-  bottomRef: React.RefObject<HTMLDivElement>;
-  scrollRef: React.RefObject<HTMLDivElement>;
-  handleScroll: () => void;
-  showDown: boolean;
-  conn: ConnState;
-  peerTyping: boolean;
-  handleClear: () => void;
-  onClose?: () => void;
+  messages: Message[]; role: Role; userId: string; studentName: string; lang: "en" | "ta";
+  input: string; handleInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  msgType: MsgType; setMsgType: (v: MsgType) => void; sending: boolean;
+  handleSend: () => void; handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  bottomRef: React.RefObject<HTMLDivElement>; scrollRef: React.RefObject<HTMLDivElement>;
+  handleScroll: () => void; showDown: boolean; conn: ConnState; peerTyping: boolean;
+  handleClear: () => void; onClose?: () => void; offlineQueue: Message[];
 }
 
 function ChatBody({
   messages, role, userId, studentName, lang,
   input, handleInput, msgType, setMsgType, sending,
   handleSend, handleKeyDown, bottomRef, scrollRef,
-  handleScroll, showDown, conn, peerTyping, handleClear, onClose,
+  handleScroll, showDown, conn, peerTyping, handleClear, onClose, offlineQueue,
 }: BodyProps) {
   const grouped = groupByDate(messages);
-  const QUICK: MsgType[] = role === "student"
-    ? ["text", "edit_request", "doubt", "contact_request"]
-    : ["text"];
-
+  const QUICK: MsgType[] = role === "student" ? ["text", "edit_request", "doubt", "contact_request"] : ["text"];
   const connColor = conn === "connected" ? "bg-emerald-400" : conn === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500";
   const connText  = conn === "connected"
     ? L(lang, "Live • Real-time", "Live • Real-time")
-    : conn === "connecting"
-    ? L(lang, "Connecting…", "இணைக்கிறது…")
-    : L(lang, "Offline", "Offline");
+    : conn === "connecting" ? L(lang, "Connecting…", "இணைக்கிறது…")
+    : L(lang, "Offline — retrying…", "Offline — மீண்டும் முயற்சிக்கிறது…");
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-card/70 shrink-0">
         <div className="relative shrink-0">
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center">
@@ -416,22 +482,20 @@ function ChatBody({
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm truncate">{role === "student" ? "Admin" : studentName}</p>
           <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-            {conn === "connected"
-              ? <Wifi className="w-3 h-3 text-emerald-500" />
-              : conn === "connecting"
-              ? <Loader2 className="w-3 h-3 animate-spin" />
-              : <WifiOff className="w-3 h-3 text-rose-500" />
-            }
+            {conn === "connected" ? <Wifi className="w-3 h-3 text-emerald-500" />
+              : conn === "connecting" ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <WifiOff className="w-3 h-3 text-rose-500" />}
             {connText}
           </p>
         </div>
-        {/* Clear button (admin only) */}
+        {offlineQueue.length > 0 && (
+          <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full">
+            <AlertCircle className="w-3 h-3" />{offlineQueue.length} queued
+          </span>
+        )}
         {role === "admin" && messages.length > 0 && (
-          <button
-            onClick={handleClear}
-            title="Clear chat"
-            className="text-muted-foreground hover:text-rose-500 transition-colors p-1 rounded-lg hover:bg-rose-500/10"
-          >
+          <button onClick={handleClear} title="Clear chat"
+            className="text-muted-foreground hover:text-rose-500 transition-colors p-1 rounded-lg hover:bg-rose-500/10">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
@@ -442,12 +506,10 @@ function ChatBody({
         )}
       </div>
 
-      {/* ── Messages ── */}
-      <div
-        ref={scrollRef} onScroll={handleScroll}
+      {/* Messages */}
+      <div ref={scrollRef} onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-3 py-4 scroll-smooth"
-        style={{ scrollbarWidth: "thin" }}
-      >
+        style={{ scrollbarWidth: "thin" }}>
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground select-none">
             <div className="w-16 h-16 rounded-full bg-secondary/70 flex items-center justify-center">
@@ -469,16 +531,11 @@ function ChatBody({
               <div key={group.date}>
                 <div className="flex items-center gap-2 my-4">
                   <div className="h-px flex-1 bg-border/40" />
-                  <span className="text-[10px] font-medium text-muted-foreground px-2.5 py-0.5 rounded-full bg-secondary">
-                    {group.date}
-                  </span>
+                  <span className="text-[10px] font-medium text-muted-foreground px-2.5 py-0.5 rounded-full bg-secondary">{group.date}</span>
                   <div className="h-px flex-1 bg-border/40" />
                 </div>
                 {group.msgs.map(msg => (
-                  <Bubble
-                    key={msg.id} msg={msg} lang={lang}
-                    isMine={msg.senderId === userId || msg.senderRole === role}
-                  />
+                  <Bubble key={msg.id} msg={msg} lang={lang} isMine={msg.senderRole === role} />
                 ))}
               </div>
             ))}
@@ -488,66 +545,61 @@ function ChatBody({
         <div ref={bottomRef} />
       </div>
 
-      {/* ── Scroll button ── */}
+      {/* Scroll down button */}
       <AnimatePresence>
         {showDown && (
           <motion.button
             initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }}
             onClick={() => bottomRef.current?.scrollIntoView({ behavior: "smooth" })}
-            className="absolute bottom-[136px] right-3 w-8 h-8 rounded-full bg-primary text-white shadow-lg flex items-center justify-center z-10"
-          >
+            className="absolute bottom-[136px] right-3 w-8 h-8 rounded-full bg-primary text-white shadow-lg flex items-center justify-center z-10">
             <ChevronDown className="w-4 h-4" />
           </motion.button>
         )}
       </AnimatePresence>
 
-      {/* ── Quick type (student only) ── */}
+      {/* Quick type (student only) */}
       {role === "student" && (
         <div className="flex gap-1.5 px-3 pt-2 pb-1.5 flex-wrap shrink-0 border-t border-border/30 bg-card/30">
           {QUICK.map(type => {
-            const { Icon, en, ta, badge } = MSG_META[type];
+            const { Icon, en, ta } = MSG_META[type];
             const active = msgType === type;
             return (
-              <button
-                key={type}
-                onClick={() => setMsgType(type)}
+              <button key={type} onClick={() => setMsgType(type)}
                 className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all duration-150 ${
                   active ? "border-primary bg-primary text-primary-foreground shadow-sm" : "border-border text-muted-foreground hover:border-primary/70 hover:text-primary"
-                }`}
-              >
-                <Icon className="w-2.5 h-2.5" />
-                {L(lang, en, ta)}
+                }`}>
+                <Icon className="w-2.5 h-2.5" />{L(lang, en, ta)}
               </button>
             );
           })}
         </div>
       )}
 
-      {/* ── Input ── */}
+      {/* Input */}
       <div className="flex items-end gap-2 px-3 pb-3 pt-2 border-t border-border/40 shrink-0 bg-card/50">
         <Textarea
-          value={input}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          disabled={conn === "disconnected"}
+          value={input} onChange={handleInput} onKeyDown={handleKeyDown}
           placeholder={
             conn === "disconnected"
-              ? L(lang, "Offline — reconnecting…", "Offline — இணைக்கிறது…")
+              ? L(lang, "Offline — messages will queue", "Offline — messages queue ஆகும்")
               : L(lang,
                   role === "admin" ? "Reply to student…" : "Type your message…",
-                  role === "admin" ? "Student-க்கு reply…" : "உங்கள் message இங்கே…"
-                )
+                  role === "admin" ? "Student-க்கு reply…" : "உங்கள் message இங்கே…")
           }
           className="resize-none text-sm rounded-xl min-h-[42px] max-h-[110px] bg-secondary border-0 focus-visible:ring-1 focus-visible:ring-primary"
           rows={1}
         />
         <Button
           onClick={handleSend}
-          disabled={sending || !input.trim() || conn !== "connected"}
+          disabled={sending || !input.trim()}
           size="icon"
-          className="gradient-primary text-primary-foreground rounded-xl h-10 w-10 shrink-0 shadow-md"
-        >
-          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          className={`text-primary-foreground rounded-xl h-10 w-10 shrink-0 shadow-md transition-all ${
+            conn !== "connected" ? "bg-amber-500 hover:bg-amber-600" : "gradient-primary"
+          }`}
+          title={conn !== "connected" ? "Offline – will queue" : "Send"}>
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" />
+            : conn !== "connected" ? <Clock className="w-4 h-4" />
+            : <Send className="w-4 h-4" />}
         </Button>
       </div>
     </div>

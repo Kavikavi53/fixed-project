@@ -6,7 +6,7 @@ import {
   Plus, Trash2, ShieldAlert, ShieldCheck, Megaphone, ClipboardList, Pencil, FileDown,
   FileText, Upload, X, Filter, Zap, Bell, MessageCircle,
 } from "lucide-react";
-import ChatWindow from "./ChatWindow";
+import ChatWindow, { getUnreadCount } from "./ChatWindow";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,22 @@ export default function AdminDashboard({
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [chatStudent, setChatStudent] = useState<Student | null>(null);
   const [adminUserId, setAdminUserId] = useState<string>("");
+  // Per-student unread counts for sidebar badges
+  const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
+
+  // Initialize unread counts from localStorage on mount
+  useEffect(() => {
+    const map: Record<string, number> = {};
+    students.forEach(s => {
+      const n = getUnreadCount(s.id);
+      if (n > 0) map[s.id] = n;
+    });
+    setUnreadMap(map);
+  }, [students]);
+
+  const handleUnreadChange = useCallback((sid: string, count: number) => {
+    setUnreadMap(prev => ({ ...prev, [sid]: count }));
+  }, []);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -277,8 +293,13 @@ export default function AdminDashboard({
           <TabsTrigger value="audit" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <ClipboardList className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Log", "பதிவு")}
           </TabsTrigger>
-          <TabsTrigger value="chat" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+          <TabsTrigger value="chat" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground relative">
             <MessageCircle className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Chat", "Chat")}
+            {Object.values(unreadMap).reduce((a, b) => a + b, 0) > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">
+                {Object.values(unreadMap).reduce((a, b) => a + b, 0) > 9 ? "9+" : Object.values(unreadMap).reduce((a, b) => a + b, 0)}
+              </span>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -581,11 +602,18 @@ export default function AdminDashboard({
                     onClick={() => setChatStudent(s)}
                     className={`w-full text-left px-3 py-2.5 flex items-center gap-2.5 hover:bg-secondary/60 transition-colors border-b border-border/30 ${chatStudent?.id === s.id ? "bg-primary/10 border-l-2 border-l-primary" : ""}`}
                   >
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center shrink-0">
-                      <span className="text-[10px] font-bold text-white">{s.full_name.charAt(0).toUpperCase()}</span>
+                    <div className="relative w-8 h-8 shrink-0">
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center">
+                        <span className="text-[10px] font-bold text-white">{s.full_name.charAt(0).toUpperCase()}</span>
+                      </div>
+                      {(unreadMap[s.id] ?? 0) > 0 && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center shadow">
+                          {(unreadMap[s.id] ?? 0) > 9 ? "9+" : unreadMap[s.id]}
+                        </span>
+                      )}
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{s.full_name}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xs font-medium truncate ${(unreadMap[s.id] ?? 0) > 0 ? "font-bold text-foreground" : ""}`}>{s.full_name}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{s.auto_id}</p>
                     </div>
                   </button>
@@ -600,6 +628,7 @@ export default function AdminDashboard({
                     role="admin"
                     userId={adminUserId}
                     lang={lang}
+                    onUnreadChange={handleUnreadChange}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
