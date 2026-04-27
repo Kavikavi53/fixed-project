@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      chat_messages: {
+        Row: {
+          id: string
+          student_id: string
+          sender_role: "admin" | "student"
+          sender_id: string | null
+          message: string
+          message_type: "text" | "edit_request" | "doubt" | "contact_request"
+          is_read: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          student_id: string
+          sender_role: "admin" | "student"
+          sender_id?: string | null
+          message: string
+          message_type?: "text" | "edit_request" | "doubt" | "contact_request"
+          is_read?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          student_id?: string
+          sender_role?: "admin" | "student"
+          sender_id?: string | null
+          message?: string
+          message_type?: "text" | "edit_request" | "doubt" | "contact_request"
+          is_read?: boolean
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       announcements: {
         Row: {
           created_at: string

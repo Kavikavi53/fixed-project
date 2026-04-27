@@ -155,12 +155,12 @@ export default function ChatWindow({
   // ── Fetch history ──────────────────────────────────────────────────────────
   const fetchMessages = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await (supabase as any)
+    const { data, error } = await supabase
       .from("chat_messages")
       .select("*")
       .eq("student_id", studentId)
       .order("created_at", { ascending: true });
-    if (error) { toast.error("Failed to load chat"); }
+    if (error) { toast.error("Failed to load chat: " + error.message); }
     else { setMessages((data as ChatMessage[]) ?? []); }
     setLoading(false);
   }, [studentId]);
@@ -169,7 +169,7 @@ export default function ChatWindow({
 
   // ── Realtime subscription ─────────────────────────────────────────────────
   useEffect(() => {
-    const channel = (supabase as any)
+    const channel = supabase
       .channel(`chat:${studentId}`)
       .on(
         "postgres_changes",
@@ -185,7 +185,6 @@ export default function ChatWindow({
             if (prev.some(m => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
-          // Count unread if window is closed
           if (floating && !open && newMsg.sender_role !== role) {
             setUnread(u => u + 1);
           }
@@ -206,7 +205,7 @@ export default function ChatWindow({
       )
       .subscribe();
 
-    return () => { (supabase as any).removeChannel(channel); };
+    return () => { supabase.removeChannel(channel); };
   }, [studentId, floating, open, role]);
 
   // ── Auto-scroll ────────────────────────────────────────────────────────────
@@ -225,7 +224,7 @@ export default function ChatWindow({
     if (unreadFromOther.length === 0) return;
     const ids = unreadFromOther.map(m => m.id);
     supabase
-      .from("chat_messages" as any)
+      .from("chat_messages")
       .update({ is_read: true })
       .in("id", ids)
       .then(() => {});
@@ -253,7 +252,7 @@ export default function ChatWindow({
         message:      text,
         message_type: msgType,
       };
-      const { error } = await supabase.from("chat_messages" as any).insert(payload);
+      const { error } = await supabase.from("chat_messages").insert(payload);
       if (error) {
         console.error("Chat send error:", error);
         toast.error(`Error: ${error.message}`);
