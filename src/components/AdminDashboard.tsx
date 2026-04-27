@@ -1,11 +1,12 @@
- import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, DollarSign, AlertTriangle, CheckCircle, Search,
   Plus, Trash2, ShieldAlert, ShieldCheck, Megaphone, ClipboardList, Pencil, FileDown,
-  FileText, Upload, X, Filter, Zap, Bell,
+  FileText, Upload, X, Filter, Zap, Bell, MessageCircle,
 } from "lucide-react";
+import ChatWindow from "./ChatWindow";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,14 @@ export default function AdminDashboard({
   const [confirmPayment, setConfirmPayment] = useState<{ student: Student; status: PaymentStatus } | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [chatStudent, setChatStudent] = useState<Student | null>(null);
+  const [adminUserId, setAdminUserId] = useState<string>("");
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user?.id) setAdminUserId(data.user.id);
+    });
+  }, []);
 
   // Flash highlight helper — row-ஐ briefly highlight பண்ணும்
   const flashRow = useCallback((id: string) => {
@@ -251,7 +260,7 @@ export default function AdminDashboard({
 
       {/* Tabs */}
       <Tabs defaultValue="students" className="space-y-3">
-        <TabsList className="glass-card border-border/50 w-full grid grid-cols-4 h-10">
+        <TabsList className="glass-card border-border/50 w-full grid grid-cols-5 h-10">
           <TabsTrigger value="students" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Users className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Students", "மாணவர்")}
           </TabsTrigger>
@@ -263,6 +272,9 @@ export default function AdminDashboard({
           </TabsTrigger>
           <TabsTrigger value="audit" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <ClipboardList className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Log", "பதிவு")}
+          </TabsTrigger>
+          <TabsTrigger value="chat" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <MessageCircle className="w-3.5 h-3.5 mr-1 hidden sm:inline" />{T(lang, "Chat", "Chat")}
           </TabsTrigger>
         </TabsList>
 
@@ -536,6 +548,62 @@ export default function AdminDashboard({
                 </div>
               ))}
               {audit.length === 0 && <p className="text-center text-muted-foreground py-10 text-sm">{T(lang,"No actions recorded","செயல்கள் பதிவு இல்லை")}</p>}
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* CHAT */}
+        <TabsContent value="chat" className="space-y-3">
+          <div className="glass-card rounded-2xl overflow-hidden">
+            <div className="p-4 border-b border-border flex items-center gap-2">
+              <MessageCircle className="w-4 h-4 text-primary" />
+              <h3 className="font-semibold text-foreground text-sm">{T(lang, "Student Chat", "மாணவர் Chat")}</h3>
+              {chatStudent && (
+                <span className="ml-auto text-xs text-muted-foreground flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                  {chatStudent.full_name}
+                </span>
+              )}
+            </div>
+            <div className="flex h-[480px]">
+              {/* Student list sidebar */}
+              <div className="w-48 sm:w-56 border-r border-border/40 overflow-y-auto shrink-0">
+                {students.length === 0 && (
+                  <p className="text-center text-muted-foreground text-xs py-8">{T(lang,"No students","மாணவர் இல்லை")}</p>
+                )}
+                {students.map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => setChatStudent(s)}
+                    className={`w-full text-left px-3 py-2.5 flex items-center gap-2.5 hover:bg-secondary/60 transition-colors border-b border-border/30 ${chatStudent?.id === s.id ? "bg-primary/10 border-l-2 border-l-primary" : ""}`}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center shrink-0">
+                      <span className="text-[10px] font-bold text-white">{s.full_name.charAt(0).toUpperCase()}</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium truncate">{s.full_name}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{s.auto_id}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              {/* Chat panel */}
+              <div className="flex-1 min-w-0">
+                {chatStudent && adminUserId ? (
+                  <ChatWindow
+                    studentId={chatStudent.id}
+                    studentName={chatStudent.full_name}
+                    role="admin"
+                    userId={adminUserId}
+                    lang={lang}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-3">
+                    <MessageCircle className="w-12 h-12 opacity-15" />
+                    <p className="text-sm">{T(lang,"Select a student to chat","மாணவரை தேர்வு செய்யுங்கள்")}</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </TabsContent>

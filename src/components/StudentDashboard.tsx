@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   User, Phone, MapPin, GraduationCap, Calendar, CreditCard,
@@ -22,6 +22,7 @@ const FemaleIcon = ({ className }: { className?: string }) => (
 import StatusBadge from "./StatusBadge";
 import LiveClock from "./LiveClock";
 import StudentAvatar from "./StudentAvatar";
+import ChatWindow from "./ChatWindow";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
@@ -179,6 +180,13 @@ export default function StudentDashboard({ student, announcements, paymentHistor
   const [showDetails, setShowDetails] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showPayModal, setShowPayModal] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState("");
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user?.id) setCurrentUserId(data.user.id);
+    });
+  }, []);
 
   const handleContactRequest = async () => {
     if (!message.trim()) { toast.error(t(lang, "Please type a message", "Message தட்டச்சு பண்ணுங்க")); return; }
@@ -541,6 +549,18 @@ export default function StudentDashboard({ student, announcements, paymentHistor
             ))}
           </div>
         </motion.div>
+      )}
+
+      {/* Floating real-time chat with admin */}
+      {currentUserId && (
+        <ChatWindow
+          studentId={student.id}
+          studentName={student.full_name}
+          role="student"
+          userId={currentUserId}
+          lang={lang}
+          floating={true}
+        />
       )}
 
     </div>
