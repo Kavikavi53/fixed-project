@@ -1,503 +1,555 @@
 /**
- * ChatWindow.tsx
- * Real-time chat between Admin and Student via Supabase Realtime.
+ * ChatWindow.tsx — Pro-Level Real-Time Chat
+ * Uses Supabase Realtime BROADCAST (no database table required)
+ * Messages persist in localStorage per student channel
  *
- * Usage (Admin):
- *   <ChatWindow studentId={student.id} studentName={student.full_name} role="admin" userId={adminUid} lang={lang} />
- *
- * Usage (Student):
- *   <ChatWindow studentId={myStudent.id} studentName={myStudent.full_name} role="student" userId={myUid} lang={lang} />
+ * Admin: <ChatWindow studentId={id} studentName={name} role="admin" userId={uid} lang={lang} />
+ * Student: <ChatWindow studentId={id} studentName={name} role="student" userId={uid} lang={lang} floating />
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Send, X, MessageCircle, CheckCheck, Clock, Loader2,
-  AlertCircle, Edit3, HelpCircle, Phone, User2, ChevronDown,
+  Edit3, HelpCircle, Phone, User2, ChevronDown,
+  Wifi, WifiOff, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type MessageType = "text" | "edit_request" | "doubt" | "contact_request";
-type SenderRole  = "admin" | "student";
+type MsgType   = "text" | "edit_request" | "doubt" | "contact_request";
+type Role      = "admin" | "student";
+type ConnState = "connecting" | "connected" | "disconnected";
 
-interface ChatMessage {
+interface Message {
   id: string;
-  student_id: string;
-  sender_role: SenderRole;
-  sender_id: string | null;
-  message: string;
-  message_type: MessageType;
-  is_read: boolean;
-  created_at: string;
+  senderId: string;
+  senderRole: Role;
+  text: string;
+  type: MsgType;
+  isRead: boolean;
+  ts: number; // epoch ms
 }
 
 interface Props {
   studentId: string;
   studentName: string;
-  role: SenderRole;
+  role: Role;
   userId: string;
   lang?: "en" | "ta";
   onClose?: () => void;
-  /** If true, renders as a floating bubble (student view). Default: false (admin panel view) */
   floating?: boolean;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const t = (lang: "en" | "ta", en: string, ta: string) =>
-  lang === "en" ? en : ta;
+const L = (lang: "en" | "ta", en: string, ta: string) => lang === "en" ? en : ta;
 
-const MESSAGE_TYPE_LABELS: Record<MessageType, { en: string; ta: string; icon: React.ElementType; color: string }> = {
-  text:            { en: "Message",        ta: "செய்தி",           icon: MessageCircle, color: "bg-primary/10 text-primary" },
-  edit_request:    { en: "Edit Request",   ta: "Edit கோரிக்கை",   icon: Edit3,         color: "bg-amber-500/10 text-amber-600" },
-  doubt:           { en: "Doubt",          ta: "சந்தேகம்",         icon: HelpCircle,    color: "bg-violet-500/10 text-violet-600" },
-  contact_request: { en: "Contact Admin",  ta: "Admin தொடர்பு",   icon: Phone,          color: "bg-rose-500/10 text-rose-600" },
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+const MSG_META: Record<MsgType, { en: string; ta: string; Icon: React.ElementType; badge: string }> = {
+  text:            { en: "Message",       ta: "செய்தி",         Icon: MessageCircle, badge: "bg-primary/10 text-primary" },
+  edit_request:    { en: "Edit Request",  ta: "Edit கோரிக்கை", Icon: Edit3,         badge: "bg-amber-500/10 text-amber-600" },
+  doubt:           { en: "Doubt",         ta: "சந்தேகம்",       Icon: HelpCircle,    badge: "bg-violet-500/10 text-violet-600" },
+  contact_request: { en: "Contact Admin", ta: "Admin தொடர்பு",  Icon: Phone,         badge: "bg-rose-500/10 text-rose-600" },
 };
 
-function formatTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function fmtTime(ts: number) {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-
-function formatDateLabel(iso: string) {
-  const d = new Date(iso);
+function fmtDate(ts: number) {
+  const d = new Date(ts);
   const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
+  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   return d.toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
 }
-
-// Group messages by date
-function groupByDate(msgs: ChatMessage[]) {
-  const groups: { date: string; messages: ChatMessage[] }[] = [];
-  let currentDate = "";
+function groupByDate(msgs: Message[]) {
+  const groups: { date: string; msgs: Message[] }[] = [];
+  let cur = "";
   for (const m of msgs) {
-    const label = formatDateLabel(m.created_at);
-    if (label !== currentDate) {
-      currentDate = label;
-      groups.push({ date: label, messages: [m] });
-    } else {
-      groups[groups.length - 1].messages.push(m);
-    }
+    const label = fmtDate(m.ts);
+    if (label !== cur) { cur = label; groups.push({ date: label, msgs: [m] }); }
+    else groups[groups.length - 1].msgs.push(m);
   }
   return groups;
 }
 
-// ─── MessageBubble ────────────────────────────────────────────────────────────
-function MessageBubble({ msg, isMine, lang }: { msg: ChatMessage; isMine: boolean; lang: "en" | "ta" }) {
-  const meta = MESSAGE_TYPE_LABELS[msg.message_type];
-  const Icon = meta.icon;
+// LocalStorage persistence
+const STORAGE_KEY = (sid: string) => `amv_chat_${sid}`;
+function loadMessages(sid: string): Message[] {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY(sid)) ?? "[]"); }
+  catch { return []; }
+}
+function saveMessages(sid: string, msgs: Message[]) {
+  // Keep last 200 messages only
+  const trimmed = msgs.slice(-200);
+  try { localStorage.setItem(STORAGE_KEY(sid), JSON.stringify(trimmed)); } catch {}
+}
+function clearMessages(sid: string) {
+  try { localStorage.removeItem(STORAGE_KEY(sid)); } catch {}
+}
 
+// ─── Bubble ───────────────────────────────────────────────────────────────────
+function Bubble({ msg, isMine, lang }: { msg: Message; isMine: boolean; lang: "en" | "ta" }) {
+  const { Icon, badge, en, ta } = MSG_META[msg.type];
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8, scale: 0.97 }}
+      initial={{ opacity: 0, y: 10, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 400, damping: 28 }}
-      className={`flex ${isMine ? "justify-end" : "justify-start"} mb-1`}
+      transition={{ type: "spring", stiffness: 440, damping: 32 }}
+      className={`flex ${isMine ? "justify-end" : "justify-start"} mb-1.5`}
     >
       {!isMine && (
         <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center mr-2 mt-auto mb-0.5 shrink-0">
           <User2 className="w-3.5 h-3.5 text-white" />
         </div>
       )}
-      <div className={`max-w-[75%] ${isMine ? "items-end" : "items-start"} flex flex-col gap-0.5`}>
-        {/* Type badge (non-text) */}
-        {msg.message_type !== "text" && (
-          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${meta.color} ${isMine ? "self-end" : "self-start"}`}>
+      <div className={`max-w-[76%] flex flex-col gap-0.5 ${isMine ? "items-end" : "items-start"}`}>
+        {msg.type !== "text" && (
+          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge} ${isMine ? "self-end" : "self-start"}`}>
             <Icon className="w-2.5 h-2.5" />
-            {t(lang, meta.en, meta.ta)}
+            {L(lang, en, ta)}
           </span>
         )}
-        <div
-          className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-            isMine
-              ? "bg-primary text-primary-foreground rounded-br-sm"
-              : "bg-secondary text-secondary-foreground rounded-bl-sm"
-          }`}
-        >
-          {msg.message}
+        <div className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
+          isMine
+            ? "bg-primary text-primary-foreground rounded-br-sm"
+            : "bg-secondary text-secondary-foreground rounded-bl-sm"
+        }`}>
+          {msg.text}
         </div>
         <div className={`flex items-center gap-1 text-[10px] text-muted-foreground ${isMine ? "justify-end" : "justify-start"}`}>
           <Clock className="w-2.5 h-2.5" />
-          {formatTime(msg.created_at)}
-          {isMine && (
-            msg.is_read
-              ? <CheckCheck className="w-3 h-3 text-primary ml-0.5" />
-              : <CheckCheck className="w-3 h-3 text-muted-foreground/50 ml-0.5" />
-          )}
+          {fmtTime(msg.ts)}
+          {isMine && <CheckCheck className={`w-3 h-3 ml-0.5 ${msg.isRead ? "text-primary" : "text-muted-foreground/40"}`} />}
         </div>
       </div>
     </motion.div>
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+function TypingDots() {
+  return (
+    <div className="flex items-center gap-1.5 px-3.5 py-2.5 bg-secondary rounded-2xl rounded-bl-sm w-fit ml-9 mb-2">
+      {[0,1,2].map(i => (
+        <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50"
+          animate={{ y: [0, -5, 0] }}
+          transition={{ repeat: Infinity, duration: 0.85, delay: i * 0.16 }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function ChatWindow({
   studentId, studentName, role, userId, lang = "en", onClose, floating = false,
 }: Props) {
-  const [messages, setMessages]   = useState<ChatMessage[]>([]);
-  const [input, setInput]         = useState("");
-  const [msgType, setMsgType]     = useState<MessageType>("text");
-  const [sending, setSending]     = useState(false);
-  const [loading, setLoading]     = useState(true);
-  const [open, setOpen]           = useState(!floating);
-  const [unread, setUnread]       = useState(0);
-  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [messages, setMessages]     = useState<Message[]>(() => loadMessages(studentId));
+  const [input, setInput]           = useState("");
+  const [msgType, setMsgType]       = useState<MsgType>("text");
+  const [sending, setSending]       = useState(false);
+  const [open, setOpen]             = useState(!floating);
+  const [unread, setUnread]         = useState(0);
+  const [conn, setConn]             = useState<ConnState>("connecting");
+  const [peerTyping, setPeerTyping] = useState(false);
+  const [showDown, setShowDown]     = useState(false);
+
   const bottomRef  = useRef<HTMLDivElement>(null);
   const scrollRef  = useRef<HTMLDivElement>(null);
+  const channelRef = useRef<any>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Fetch history ──────────────────────────────────────────────────────────
-  const fetchMessages = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("chat_messages")
-      .select("*")
-      .eq("student_id", studentId)
-      .order("created_at", { ascending: true });
-    if (error) { toast.error("Failed to load chat: " + error.message); }
-    else { setMessages((data as ChatMessage[]) ?? []); }
-    setLoading(false);
-  }, [studentId]);
+  // Channel name — same for both sides
+  const CHANNEL = `amv_chat_${studentId}`;
 
-  useEffect(() => { fetchMessages(); }, [fetchMessages]);
-
-  // ── Realtime subscription ─────────────────────────────────────────────────
+  // ── Subscribe ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const channel = supabase
-      .channel(`chat:${studentId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "chat_messages",
-          filter: `student_id=eq.${studentId}`,
-        },
-        (payload) => {
-          const newMsg = payload.new as ChatMessage;
-          setMessages(prev => {
-            if (prev.some(m => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
-          });
-          if (floating && !open && newMsg.sender_role !== role) {
-            setUnread(u => u + 1);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "chat_messages",
-          filter: `student_id=eq.${studentId}`,
-        },
-        (payload) => {
-          const updated = payload.new as ChatMessage;
-          setMessages(prev => prev.map(m => m.id === updated.id ? updated : m));
-        }
-      )
-      .subscribe();
+    const ch = supabase.channel(CHANNEL, {
+      config: { broadcast: { self: false, ack: false } },
+    });
 
-    return () => { supabase.removeChannel(channel); };
-  }, [studentId, floating, open, role]);
+    ch.on("broadcast", { event: "message" }, ({ payload }: { payload: Message }) => {
+      setMessages(prev => {
+        if (prev.some(m => m.id === payload.id)) return prev;
+        const updated = [...prev, payload];
+        saveMessages(studentId, updated);
+        return updated;
+      });
+      if (floating && !open && payload.senderRole !== role) {
+        setUnread(u => u + 1);
+      }
+      setPeerTyping(false);
+    });
 
-  // ── Auto-scroll ────────────────────────────────────────────────────────────
+    ch.on("broadcast", { event: "typing" }, ({ payload }: { payload: { role: Role } }) => {
+      if (payload.role !== role) {
+        setPeerTyping(true);
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => setPeerTyping(false), 2500);
+      }
+    });
+
+    ch.on("broadcast", { event: "read" }, ({ payload }: { payload: { role: Role } }) => {
+      if (payload.role !== role) {
+        setMessages(prev => {
+          const updated = prev.map(m => m.senderRole === role ? { ...m, isRead: true } : m);
+          saveMessages(studentId, updated);
+          return updated;
+        });
+      }
+    });
+
+    ch.on("broadcast", { event: "clear" }, () => {
+      setMessages([]);
+      clearMessages(studentId);
+    });
+
+    ch.subscribe(status => {
+      if (status === "SUBSCRIBED")    setConn("connected");
+      if (status === "CLOSED")        setConn("disconnected");
+      if (status === "CHANNEL_ERROR") setConn("disconnected");
+    });
+
+    channelRef.current = ch;
+    return () => { supabase.removeChannel(ch); };
+  }, [studentId, floating, open, role, CHANNEL]);
+
+  // ── Auto-scroll ──────────────────────────────────────────────────────────
   useEffect(() => {
-    if (open) {
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
-    }
+    if (open) setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
   }, [messages, open]);
 
-  // ── Mark messages as read when window is open ──────────────────────────────
+  // ── Send read receipt when window opens ─────────────────────────────────
   useEffect(() => {
-    if (!open || messages.length === 0) return;
-    const unreadFromOther = messages.filter(
-      m => !m.is_read && m.sender_role !== role
-    );
-    if (unreadFromOther.length === 0) return;
-    const ids = unreadFromOther.map(m => m.id);
-    supabase
-      .from("chat_messages")
-      .update({ is_read: true })
-      .in("id", ids)
-      .then(() => {});
+    if (!open || !channelRef.current || conn !== "connected") return;
+    channelRef.current.send({ type: "broadcast", event: "read", payload: { role } });
     setUnread(0);
-  }, [open, messages, role]);
+    setMessages(prev => {
+      const updated = prev.map(m => m.senderRole !== role ? { ...m, isRead: true } : m);
+      saveMessages(studentId, updated);
+      return updated;
+    });
+  }, [open, conn, role, studentId]);
 
-  // ── Scroll detection ───────────────────────────────────────────────────────
   const handleScroll = () => {
     if (!scrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
-    setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 120);
+    setShowDown(scrollHeight - scrollTop - clientHeight > 100);
   };
 
-  // ── Send ───────────────────────────────────────────────────────────────────
+  // ── Typing broadcast ────────────────────────────────────────────────────
+  const broadcastTyping = useCallback(() => {
+    if (!channelRef.current || conn !== "connected") return;
+    channelRef.current.send({ type: "broadcast", event: "typing", payload: { role } });
+  }, [conn, role]);
+
+  const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    broadcastTyping();
+  };
+
+  // ── Send ────────────────────────────────────────────────────────────────
   const handleSend = async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || sending || conn !== "connected") return;
     setSending(true);
+
+    const msg: Message = {
+      id: uid(),
+      senderId: userId,
+      senderRole: role,
+      text,
+      type: msgType,
+      isRead: false,
+      ts: Date.now(),
+    };
+
+    // Optimistic — add locally first
+    setMessages(prev => {
+      const updated = [...prev, msg];
+      saveMessages(studentId, updated);
+      return updated;
+    });
+    setInput("");
+    setMsgType("text");
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const payload = {
-        student_id:   studentId,
-        sender_role:  role,
-        sender_id:    user?.id ?? userId,
-        message:      text,
-        message_type: msgType,
-      };
-      const { error } = await supabase.from("chat_messages").insert(payload);
-      if (error) {
-        console.error("Chat send error:", error);
-        toast.error(`Error: ${error.message}`);
-      } else {
-        setInput("");
-        setMsgType("text");
-      }
-    } catch (e: any) {
-      console.error("Chat exception:", e);
-      toast.error(`Exception: ${e?.message ?? "unknown"}`);
+      await channelRef.current.send({ type: "broadcast", event: "message", payload: msg });
+    } catch (e) {
+      console.error("[Chat] send:", e);
+      toast.error(L(lang, "Send failed. Check connection.", "அனுப்பல் தோல்வி."));
     }
     setSending(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
-  // ─── Floating bubble (student) ─────────────────────────────────────────────
+  const handleClear = () => {
+    if (!channelRef.current) return;
+    setMessages([]);
+    clearMessages(studentId);
+    channelRef.current.send({ type: "broadcast", event: "clear", payload: {} });
+    toast.success(L(lang, "Chat cleared", "Chat அழிக்கப்பட்டது"));
+  };
+
+  const bodyProps = {
+    messages, role, userId, studentName, lang,
+    input, handleInput, msgType, setMsgType,
+    sending, handleSend, handleKeyDown,
+    bottomRef, scrollRef, handleScroll, showDown,
+    conn, peerTyping, handleClear,
+    onClose,
+  };
+
+  // ─── Floating (student) ────────────────────────────────────────────────
   if (floating) {
     return (
       <div className="fixed bottom-6 right-4 z-50 flex flex-col items-end gap-3">
         <AnimatePresence>
           {open && (
             <motion.div
-              initial={{ opacity: 0, y: 24, scale: 0.93 }}
+              key="chat-panel"
+              initial={{ opacity: 0, y: 28, scale: 0.90 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 24, scale: 0.93 }}
-              transition={{ type: "spring", stiffness: 380, damping: 28 }}
-              className="w-[330px] sm:w-[370px] h-[480px] rounded-3xl shadow-2xl border border-border/50 flex flex-col overflow-hidden glass-card"
-              style={{ backdropFilter: "blur(20px)" }}
+              exit={{ opacity: 0, y: 28, scale: 0.90 }}
+              transition={{ type: "spring", stiffness: 340, damping: 26 }}
+              className="w-[330px] sm:w-[375px] h-[490px] rounded-3xl shadow-2xl border border-border/60 flex flex-col overflow-hidden glass-card"
+              style={{ backdropFilter: "blur(24px)" }}
             >
-              <ChatBody
-                messages={messages} loading={loading} role={role} userId={userId}
-                studentName={studentName} lang={lang} input={input} setInput={setInput}
-                msgType={msgType} setMsgType={setMsgType} sending={sending}
-                handleSend={handleSend} handleKeyDown={handleKeyDown}
-                bottomRef={bottomRef} scrollRef={scrollRef} onScroll={handleScroll}
-                showScrollBtn={showScrollBtn}
-                onClose={() => setOpen(false)}
-              />
+              <ChatBody {...bodyProps} onClose={() => setOpen(false)} />
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Fab button */}
+        {/* FAB */}
         <motion.button
-          whileTap={{ scale: 0.9 }}
-          onClick={() => { setOpen(v => !v); setUnread(0); }}
-          className="w-14 h-14 rounded-full gradient-primary shadow-xl flex items-center justify-center relative"
+          whileTap={{ scale: 0.86 }} whileHover={{ scale: 1.07 }}
+          onClick={() => { setOpen(v => !v); if (!open) setUnread(0); }}
+          className="w-14 h-14 rounded-full gradient-primary shadow-2xl flex items-center justify-center relative"
         >
-          {open
-            ? <X className="w-5 h-5 text-white" />
-            : <MessageCircle className="w-6 h-6 text-white" />
-          }
-          {unread > 0 && !open && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
-              {unread > 9 ? "9+" : unread}
-            </span>
-          )}
+          <AnimatePresence mode="wait">
+            {open
+              ? <motion.div key="x" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.16 }}><X className="w-5 h-5 text-white" /></motion.div>
+              : <motion.div key="c" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.16 }}><MessageCircle className="w-6 h-6 text-white" /></motion.div>
+            }
+          </AnimatePresence>
+          <AnimatePresence>
+            {unread > 0 && !open && (
+              <motion.span key="badge" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
+                className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
+                {unread > 9 ? "9+" : unread}
+              </motion.span>
+            )}
+          </AnimatePresence>
         </motion.button>
       </div>
     );
   }
 
-  // ─── Inline (admin panel) ──────────────────────────────────────────────────
+  // ─── Inline (admin) ────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full min-h-[420px] rounded-2xl border border-border/50 overflow-hidden glass-card">
-      <ChatBody
-        messages={messages} loading={loading} role={role} userId={userId}
-        studentName={studentName} lang={lang} input={input} setInput={setInput}
-        msgType={msgType} setMsgType={setMsgType} sending={sending}
-        handleSend={handleSend} handleKeyDown={handleKeyDown}
-        bottomRef={bottomRef} scrollRef={scrollRef} onScroll={handleScroll}
-        showScrollBtn={showScrollBtn}
-        onClose={onClose}
-      />
+      <ChatBody {...bodyProps} />
     </div>
   );
 }
 
-// ─── ChatBody (shared UI) ─────────────────────────────────────────────────────
-function ChatBody({
-  messages, loading, role, userId, studentName, lang,
-  input, setInput, msgType, setMsgType, sending,
-  handleSend, handleKeyDown, bottomRef, scrollRef, onScroll, showScrollBtn, onClose,
-}: {
-  messages: ChatMessage[];
-  loading: boolean;
-  role: SenderRole;
+// ─── ChatBody ─────────────────────────────────────────────────────────────────
+interface BodyProps {
+  messages: Message[];
+  role: Role;
   userId: string;
   studentName: string;
   lang: "en" | "ta";
   input: string;
-  setInput: (v: string) => void;
-  msgType: MessageType;
-  setMsgType: (v: MessageType) => void;
+  handleInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  msgType: MsgType;
+  setMsgType: (v: MsgType) => void;
   sending: boolean;
   handleSend: () => void;
   handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   bottomRef: React.RefObject<HTMLDivElement>;
   scrollRef: React.RefObject<HTMLDivElement>;
-  onScroll: () => void;
-  showScrollBtn: boolean;
+  handleScroll: () => void;
+  showDown: boolean;
+  conn: ConnState;
+  peerTyping: boolean;
+  handleClear: () => void;
   onClose?: () => void;
-}) {
+}
+
+function ChatBody({
+  messages, role, userId, studentName, lang,
+  input, handleInput, msgType, setMsgType, sending,
+  handleSend, handleKeyDown, bottomRef, scrollRef,
+  handleScroll, showDown, conn, peerTyping, handleClear, onClose,
+}: BodyProps) {
   const grouped = groupByDate(messages);
-  const QUICK_TYPES: MessageType[] = role === "student"
+  const QUICK: MsgType[] = role === "student"
     ? ["text", "edit_request", "doubt", "contact_request"]
     : ["text"];
 
+  const connColor = conn === "connected" ? "bg-emerald-400" : conn === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500";
+  const connText  = conn === "connected"
+    ? L(lang, "Live • Real-time", "Live • Real-time")
+    : conn === "connecting"
+    ? L(lang, "Connecting…", "இணைக்கிறது…")
+    : L(lang, "Offline", "Offline");
+
   return (
-    <>
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-card/60">
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center shrink-0">
-          <User2 className="w-4 h-4 text-white" />
+    <div className="flex flex-col h-full relative">
+      {/* ── Header ── */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-card/70 shrink-0">
+        <div className="relative shrink-0">
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary/50 flex items-center justify-center">
+            <User2 className="w-4 h-4 text-white" />
+          </div>
+          <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background ${connColor}`} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-sm truncate">
-            {role === "student" ? t(lang, "Admin", "Admin") : studentName}
-          </p>
+          <p className="font-semibold text-sm truncate">{role === "student" ? "Admin" : studentName}</p>
           <p className="text-[11px] text-muted-foreground flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-            {t(lang, "Real-time chat", "Real-time chat")}
+            {conn === "connected"
+              ? <Wifi className="w-3 h-3 text-emerald-500" />
+              : conn === "connecting"
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <WifiOff className="w-3 h-3 text-rose-500" />
+            }
+            {connText}
           </p>
         </div>
+        {/* Clear button (admin only) */}
+        {role === "admin" && messages.length > 0 && (
+          <button
+            onClick={handleClear}
+            title="Clear chat"
+            className="text-muted-foreground hover:text-rose-500 transition-colors p-1 rounded-lg hover:bg-rose-500/10"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
         {onClose && (
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-secondary transition-colors ml-1">
             <X className="w-4 h-4" />
           </button>
         )}
       </div>
 
-      {/* Messages */}
+      {/* ── Messages ── */}
       <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5 scroll-smooth"
+        ref={scrollRef} onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-3 py-4 scroll-smooth"
         style={{ scrollbarWidth: "thin" }}
       >
-        {loading ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
-            <MessageCircle className="w-10 h-10 opacity-20" />
-            <p className="text-sm text-center">
-              {t(lang, "No messages yet. Start the conversation!", "இன்னும் செய்தி இல்லை. பேசுங்கள்!")}
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground select-none">
+            <div className="w-16 h-16 rounded-full bg-secondary/70 flex items-center justify-center">
+              <MessageCircle className="w-8 h-8 opacity-25" />
+            </div>
+            <p className="text-sm text-center leading-relaxed">
+              {L(lang, "No messages yet.\nStart the conversation!", "இன்னும் செய்தி இல்லை.\nபேசுங்கள்!")}
             </p>
+            {conn === "connecting" && (
+              <span className="flex items-center gap-1.5 text-xs text-amber-500">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {L(lang, "Connecting to server…", "Server-உடன் இணைக்கிறது…")}
+              </span>
+            )}
           </div>
         ) : (
-          grouped.map(group => (
-            <div key={group.date}>
-              {/* Date separator */}
-              <div className="flex items-center gap-2 my-4">
-                <div className="h-px flex-1 bg-border/50" />
-                <span className="text-[10px] font-medium text-muted-foreground px-2 py-0.5 rounded-full bg-secondary">
-                  {group.date}
-                </span>
-                <div className="h-px flex-1 bg-border/50" />
+          <>
+            {grouped.map(group => (
+              <div key={group.date}>
+                <div className="flex items-center gap-2 my-4">
+                  <div className="h-px flex-1 bg-border/40" />
+                  <span className="text-[10px] font-medium text-muted-foreground px-2.5 py-0.5 rounded-full bg-secondary">
+                    {group.date}
+                  </span>
+                  <div className="h-px flex-1 bg-border/40" />
+                </div>
+                {group.msgs.map(msg => (
+                  <Bubble
+                    key={msg.id} msg={msg} lang={lang}
+                    isMine={msg.senderId === userId || msg.senderRole === role}
+                  />
+                ))}
               </div>
-              {group.messages.map(msg => (
-                <MessageBubble
-                  key={msg.id}
-                  msg={msg}
-                  isMine={msg.sender_id === userId || (msg.sender_role === role && !msg.sender_id)}
-                  lang={lang}
-                />
-              ))}
-            </div>
-          ))
+            ))}
+            {peerTyping && <TypingDots />}
+          </>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {/* Scroll to bottom button */}
+      {/* ── Scroll button ── */}
       <AnimatePresence>
-        {showScrollBtn && (
+        {showDown && (
           <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
+            initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }}
             onClick={() => bottomRef.current?.scrollIntoView({ behavior: "smooth" })}
-            className="absolute bottom-20 right-4 w-8 h-8 rounded-full bg-primary text-white shadow-lg flex items-center justify-center"
+            className="absolute bottom-[136px] right-3 w-8 h-8 rounded-full bg-primary text-white shadow-lg flex items-center justify-center z-10"
           >
             <ChevronDown className="w-4 h-4" />
           </motion.button>
         )}
       </AnimatePresence>
 
-      {/* Quick-type selector (student only) */}
+      {/* ── Quick type (student only) ── */}
       {role === "student" && (
-        <div className="flex gap-1.5 px-3 pt-2 flex-wrap">
-          {QUICK_TYPES.map(type => {
-            const meta = MESSAGE_TYPE_LABELS[type];
-            const Icon = meta.icon;
+        <div className="flex gap-1.5 px-3 pt-2 pb-1.5 flex-wrap shrink-0 border-t border-border/30 bg-card/30">
+          {QUICK.map(type => {
+            const { Icon, en, ta, badge } = MSG_META[type];
             const active = msgType === type;
             return (
               <button
                 key={type}
                 onClick={() => setMsgType(type)}
-                className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all ${
-                  active
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border text-muted-foreground hover:border-primary hover:text-primary"
+                className={`flex items-center gap-1 text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all duration-150 ${
+                  active ? "border-primary bg-primary text-primary-foreground shadow-sm" : "border-border text-muted-foreground hover:border-primary/70 hover:text-primary"
                 }`}
               >
                 <Icon className="w-2.5 h-2.5" />
-                {t(lang, meta.en, meta.ta)}
+                {L(lang, en, ta)}
               </button>
             );
           })}
         </div>
       )}
 
-      {/* Input */}
-      <div className="flex items-end gap-2 px-3 pb-3 pt-2 border-t border-border/40">
+      {/* ── Input ── */}
+      <div className="flex items-end gap-2 px-3 pb-3 pt-2 border-t border-border/40 shrink-0 bg-card/50">
         <Textarea
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder={t(lang,
-            role === "admin" ? "Reply to student..." : "Type your message...",
-            role === "admin" ? "Student-க்கு reply பண்ணுங்க..." : "உங்கள் message இங்கே..."
-          )}
-          className="resize-none text-sm rounded-xl min-h-[42px] max-h-[100px] bg-secondary border-0 focus-visible:ring-1"
+          disabled={conn === "disconnected"}
+          placeholder={
+            conn === "disconnected"
+              ? L(lang, "Offline — reconnecting…", "Offline — இணைக்கிறது…")
+              : L(lang,
+                  role === "admin" ? "Reply to student…" : "Type your message…",
+                  role === "admin" ? "Student-க்கு reply…" : "உங்கள் message இங்கே…"
+                )
+          }
+          className="resize-none text-sm rounded-xl min-h-[42px] max-h-[110px] bg-secondary border-0 focus-visible:ring-1 focus-visible:ring-primary"
           rows={1}
         />
         <Button
           onClick={handleSend}
-          disabled={sending || !input.trim()}
+          disabled={sending || !input.trim() || conn !== "connected"}
           size="icon"
-          className="gradient-primary text-primary-foreground rounded-xl h-10 w-10 shrink-0"
+          className="gradient-primary text-primary-foreground rounded-xl h-10 w-10 shrink-0 shadow-md"
         >
-          {sending
-            ? <Loader2 className="w-4 h-4 animate-spin" />
-            : <Send className="w-4 h-4" />
-          }
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </Button>
       </div>
-    </>
+    </div>
   );
 }
