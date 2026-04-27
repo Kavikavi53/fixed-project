@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import { useStore, runAutoPaymentLogic } from "@/lib/store";
+import { useNotifications } from "@/hooks/useNotifications";
 import AccessCodePage from "@/components/AccessCodePage";
 import LoginPage from "@/components/LoginPage";
 import SignUpPage from "@/components/SignUpPage";
@@ -8,14 +9,11 @@ import DashboardHeader from "@/components/DashboardHeader";
 import AdminDashboard from "@/components/AdminDashboard";
 import StudentDashboard from "@/components/StudentDashboard";
 import FooterBar from "@/components/FooterBar";
+import type { Student, Announcement } from "@/lib/store";
 
-// Auto-retry loader — click to refresh இல்லாம automatically retry பண்ணும்
 function ProfileSetupLoader({ onRetry, lang }: { onRetry: () => void; lang: "en" | "ta" }) {
   useEffect(() => {
-    // 2s, 4s, 8s, 15s — exponential retry
-    const timers = [2000, 4000, 8000, 15000].map((ms) =>
-      setTimeout(() => onRetry(), ms)
-    );
+    const timers = [2000, 4000, 8000, 15000].map((ms) => setTimeout(() => onRetry(), ms));
     return () => timers.forEach(clearTimeout);
   }, [onRetry]);
 
@@ -34,8 +32,20 @@ export default function Index() {
   const store = useStore();
   const [showSignUp, setShowSignUp] = useState(false);
   const [lang, setLang] = useState<"en" | "ta">("en");
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
-  // Admin login ஆனவுடன் auto payment logic trigger
+  const {
+    notifications, unreadCount, addNotification,
+    markRead, markAllRead, clearAll,
+    requestPermission, permissionGranted,
+  } = useNotifications(soundEnabled);
+
+  // Track prev students/announcements to detect real changes
+  const prevStudentsRef = useRef<Student[]>([]);
+  const prevAnnouncementsRef = useRef<Announcement[]>([]);
+  const initialLoadDone = useRef(false);
+
+  // Auto payment logic
   useEffect(() => {
     if (user?.role === "admin") {
       runAutoPaymentLogic(true).then(() => {
@@ -45,6 +55,114 @@ export default function Index() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role]);
 
+  // ── Realtime notifications: watch student changes ──
+  useEffect(() => {
+    if (!user || store.loading) return;
+
+    if (!initialLoadDone.current) {
+      // First load — just snapshot, don't fire notifications
+      prevStudentsRef.current = store.students;
+      prevAnnouncementsRef.current = store.announcements;
+      initialLoadDone.current = true;
+      return;
+    }
+
+    const prev = prevStudentsRef.current;
+    const curr = store.students;
+
+    // New students
+    const added = curr.filter(s => !prev.some(p => p.id === s.id));
+    added.forEach(s => {
+      addNotification({
+        type: "student",
+        title: lang === "en" ? "New Student Added" : "புதிய மாணவர் சேர்க்கப்பட்டார்",
+        message: `${s.full_name} (${s.auto_id}) — ${s.batch} ${s.stream}`,
+        studentId: s.id,
+        studentName: s.full_name,
+      });
+    });
+
+    // Payment status changes
+    const payChanged = curr.filter(s => {
+      const p = prev.find(p => p.id === s.id);
+      return p && p.payment_status !== s.payment_status;
+    });
+    payChanged.forEach(s => {
+      const emoji = s.payment_status === "paid" ? "✅" : s.payment_status === "late" ? "⚠️" : "⏳";
+      addNotification({
+        type: "payment",
+        title: `${emoji} ${lang === "en" ? "Payment Updated" : "கட்டணம் புதுப்பிக்கப்பட்டது"}`,
+        message: `${s.full_name} → ${s.payment_status.toUpperCase()}`,
+        studentId: s.id,
+        studentName: s.full_name,
+        urgent: s.payment_status === "late",
+      });
+    });
+
+    // Account block/unblock
+    const blockChanged = curr.filter(s => {
+      const p = prev.find(p => p.id === s.id);
+      return p && p.account_status !== s.account_status;
+    });
+    blockChanged.forEach(s => {
+      addNotification({
+        type: "alert",
+        title: s.account_status === "blocked"
+          ? (lang === "en" ? "🚫 Account Blocked" : "🚫 கணக்கு தடுக்கப்பட்டது")
+          : (lang === "en" ? "✅ Account Unblocked" : "✅ கணக்கு திறக்கப்பட்டது"),
+        message: s.full_name,
+        urgent: s.account_status === "blocked",
+      });
+    });
+
+    prevStudentsRef.current = curr;
+  }, [store.students, store.loading, user, lang, addNotification]);
+
+  // ── Realtime notifications: watch announcements ──
+  useEffect(() => {
+    if (!user || store.loading || !initialLoadDone.current) return;
+
+    const prev = prevAnnouncementsRef.current;
+    const curr = store.announcements;
+
+    const newAnn = curr.filter(a => !prev.some(p => p.id === a.id));
+    newAnn.forEach(a => {
+      addNotification({
+        type: "announcement",
+        title: a.urgent
+          ? `🚨 ${lang === "en" ? "Urgent Announcement" : "அவசர அறிவிப்பு"}`
+          : `📢 ${lang === "en" ? "New Announcement" : "புதிய அறிவிப்பு"}`,
+        message: `${a.title}: ${a.message.slice(0, 80)}${a.message.length > 80 ? "..." : ""}`,
+        urgent: a.urgent ?? false,
+      });
+    });
+
+    prevAnnouncementsRef.current = curr;
+  }, [store.announcements, store.loading, user, lang, addNotification]);
+
+  // ── Realtime status notifications ──
+  const prevStatusRef = useRef(store.realtimeStatus);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const curr = store.realtimeStatus;
+    if (prev !== curr && initialLoadDone.current) {
+      if (curr === "live" && prev !== "live") {
+        addNotification({
+          type: "system",
+          title: lang === "en" ? "🟢 Connected" : "🟢 இணைக்கப்பட்டது",
+          message: lang === "en" ? "Real-time sync is active." : "Real-time sync இயங்குகிறது.",
+        });
+      } else if (curr === "offline") {
+        addNotification({
+          type: "alert",
+          title: lang === "en" ? "🔴 Connection Lost" : "🔴 இணைப்பு துண்டிக்கப்பட்டது",
+          message: lang === "en" ? "Working offline. Changes will sync when reconnected." : "Offline முறையில் பணிபுரிகிறது.",
+          urgent: true,
+        });
+      }
+    }
+    prevStatusRef.current = curr;
+  }, [store.realtimeStatus, lang, addNotification]);
 
   if (!accessGranted) return <AccessCodePage onVerify={verifyAccessCode} lang={lang} />;
 
@@ -73,6 +191,15 @@ export default function Index() {
         realtimeStatus={store.realtimeStatus}
         lang={lang}
         onLangChange={setLang}
+        notifications={notifications}
+        unreadCount={unreadCount}
+        onMarkRead={markRead}
+        onMarkAllRead={markAllRead}
+        onClearAll={clearAll}
+        soundEnabled={soundEnabled}
+        onToggleSound={() => setSoundEnabled(v => !v)}
+        onRequestPermission={requestPermission}
+        permissionGranted={permissionGranted}
       />
 
       <div className="flex-1">

@@ -23,6 +23,7 @@ import StatsCard from "./StatsCard";
 import ReportsTab from "./ReportsTab";
 import StudentAvatar from "./StudentAvatar";
 import LiveClock from "./LiveClock";
+import ActivityFeed from "./ActivityFeed";
 import { supabase } from "@/integrations/supabase/client";
 import type { Student, Announcement, AuditEntry, PaymentHistory, PaymentStatus, Batch, Stream } from "@/lib/store";
 
@@ -258,7 +259,10 @@ export default function AdminDashboard({
         </div>
       </motion.div>
 
-      {/* Tabs */}
+      {/* Live Activity Feed - shows last 6 audit entries */}
+      <ActivityFeed audit={audit} lang={lang} maxItems={6} />
+
+            {/* Tabs */}
       <Tabs defaultValue="students" className="space-y-3">
         <TabsList className="glass-card border-border/50 w-full grid grid-cols-5 h-10">
           <TabsTrigger value="students" className="text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
