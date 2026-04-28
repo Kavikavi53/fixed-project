@@ -23,7 +23,6 @@ import StatsCard from "./StatsCard";
 import ReportsTab from "./ReportsTab";
 import StudentAvatar from "./StudentAvatar";
 import LiveClock from "./LiveClock";
-import ActivityFeed from "./ActivityFeed";
 import { supabase } from "@/integrations/supabase/client";
 import type { Student, Announcement, AuditEntry, PaymentHistory, PaymentStatus, Batch, Stream } from "@/lib/store";
 
@@ -73,6 +72,7 @@ export default function AdminDashboard({
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [chatStudent, setChatStudent] = useState<Student | null>(null);
   const [adminUserId, setAdminUserId] = useState<string>("");
+  const [showMyPaid, setShowMyPaid] = useState(false);
   // Per-student unread counts for sidebar badges
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
 
@@ -259,9 +259,10 @@ export default function AdminDashboard({
         </div>
       </div>
 
-      {/* Your Stats */}
+      {/* Your Stats - Clickable to show paid students */}
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
-        className="glass-card rounded-2xl px-4 py-3 flex items-center gap-3 border border-primary/20">
+        className="glass-card rounded-2xl px-4 py-3 flex items-center gap-3 border border-primary/20 cursor-pointer hover:border-primary/50 transition-colors active:scale-[0.99]"
+        onClick={() => setShowMyPaid(true)}>
         <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-base flex-shrink-0">👤</div>
         <div className="min-w-0 flex-1">
           <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide truncate">
@@ -273,10 +274,8 @@ export default function AdminDashboard({
             {T(lang, "Income", "வருமானம்")}: <span className="text-primary">Rs. {yourStats.income.toLocaleString()}</span>
           </p>
         </div>
+        <span className="text-xs text-primary/60 flex-shrink-0">▶</span>
       </motion.div>
-
-      {/* Live Activity Feed - shows last 6 audit entries */}
-      <ActivityFeed audit={audit} lang={lang} maxItems={6} />
 
             {/* Tabs */}
       <Tabs defaultValue="students" className="space-y-3">
@@ -641,6 +640,36 @@ export default function AdminDashboard({
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* My Paid Students Dialog */}
+      <Dialog open={showMyPaid} onOpenChange={setShowMyPaid}>
+        <DialogContent className="glass-card border-border w-[calc(100vw-2rem)] max-w-sm max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <span>👤</span> {T(lang, "Your Paid Students", "நீங்கள் Paid பண்ணியவர்கள்")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 divide-y divide-border/40 mt-2">
+            {students.filter(s => (s as any).payment_marked_by === adminEmail && s.payment_status === "paid").length === 0 ? (
+              <p className="text-center text-muted-foreground py-8 text-sm">{T(lang, "No paid students yet", "இன்னும் யாரும் paid பண்ணல")}</p>
+            ) : (
+              students.filter(s => (s as any).payment_marked_by === adminEmail && s.payment_status === "paid").map((s, i) => (
+                <div key={s.id} className="flex items-center gap-3 py-2.5 px-1">
+                  <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
+                  <div className="w-7 h-7 rounded-full bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs font-bold text-emerald-600">{s.full_name.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{s.full_name}</p>
+                    <p className="text-[10px] font-mono text-muted-foreground">{s.auto_id}</p>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">✓ Paid</span>
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialogs */}
       <AlertDialog open={!!confirmPayment} onOpenChange={o => { if (!o) setConfirmPayment(null); }}>

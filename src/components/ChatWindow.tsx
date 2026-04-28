@@ -202,6 +202,88 @@ export default function ChatWindow({
     });
   }, [studentId]);
 
+  // ── DB helpers ─────────────────────────────────────────────────────────────
+
+  /** Persist a message to chat_messages table */
+  const saveMessageToDB = useCallback(async (msg: Message) => {
+    try {
+      await supabase.from("chat_messages").insert({
+        id: msg.id,
+        student_id: msg.studentId,
+        sender_role: msg.senderRole,
+        sender_id: msg.senderId,
+        message: msg.text,
+        message_type: msg.type,
+        is_read: false,
+      });
+    } catch (err) {
+      console.error("[ChatWindow] saveMessageToDB error:", err);
+    }
+  }, []);
+
+  /** Fetch unread messages from DB (sent by the OTHER role) and merge into state */
+  const fetchUnreadFromDB = useCallback(async () => {
+    try {
+      const senderRole = role === "admin" ? "student" : "admin";
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("*")
+        .eq("student_id", studentId)
+        .eq("sender_role", senderRole)
+        .eq("is_read", false)
+        .order("created_at", { ascending: true });
+
+      if (error || !data?.length) return;
+
+      const incoming: Message[] = data.map(row => ({
+        id: row.id,
+        senderId: row.sender_id ?? "",
+        senderRole: row.sender_role as Role,
+        studentId: row.student_id,
+        text: row.message,
+        type: row.message_type as MsgType,
+        deliveryStatus: "delivered" as DeliveryStatus,
+        ts: new Date(row.created_at).getTime(),
+      }));
+
+      updateMessages(prev => {
+        const existingIds = new Set(prev.map(m => m.id));
+        const newMsgs = incoming.filter(m => !existingIds.has(m.id));
+        if (!newMsgs.length) return prev;
+
+        // If chat is closed, count as unread
+        if (!isOpenRef.current) {
+          const count = newMsgs.length;
+          setUnread(u => u + count);
+          const cur = getUnreadCount(studentId);
+          setUnreadCount(studentId, cur + count);
+          onUnreadChange?.(studentId, cur + count);
+        }
+
+        return [...prev, ...newMsgs];
+      });
+    } catch (err) {
+      console.error("[ChatWindow] fetchUnreadFromDB error:", err);
+    }
+  }, [role, studentId, updateMessages, onUnreadChange]);
+
+  /** Mark all messages from the OTHER role as read in DB */
+  const markReadInDB = useCallback(async () => {
+    try {
+      const senderRole = role === "admin" ? "student" : "admin";
+      await supabase
+        .from("chat_messages")
+        .update({ is_read: true })
+        .eq("student_id", studentId)
+        .eq("sender_role", senderRole)
+        .eq("is_read", false);
+    } catch (err) {
+      console.error("[ChatWindow] markReadInDB error:", err);
+    }
+  }, [role, studentId]);
+
+  // ── Offline queue flush ─────────────────────────────────────────────────────
+
   const flushQueue = useCallback(async (ch: any) => {
     const q = loadQueue(studentId);
     if (!q.length) return;
@@ -211,12 +293,14 @@ export default function ChatWindow({
       const sent = { ...msg, deliveryStatus: "sent" as DeliveryStatus };
       try {
         await ch.send({ type: "broadcast", event: "message", payload: sent });
+        // Also persist queued messages that weren't saved yet
+        await saveMessageToDB(sent);
         updateMessages(prev => prev.map(m => m.id === msg.id ? sent : m));
       } catch {
         setOfflineQueue(prev => { const nq = [...prev, msg]; saveQueue(studentId, nq); return nq; });
       }
     }
-  }, [studentId, updateMessages]);
+  }, [studentId, updateMessages, saveMessageToDB]);
 
   const subscribe = useCallback(() => {
     if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; }
@@ -284,11 +368,16 @@ export default function ChatWindow({
     ch.subscribe(async (status: string) => {
       if (status === "SUBSCRIBED") {
         setConn("connected");
+        // 1. Flush offline queue (sends + persists queued msgs)
         await flushQueue(ch);
+        // 2. Fetch any messages missed while offline from DB
+        await fetchUnreadFromDB();
+        // 3. If chat is open, mark everything as read
         if (isOpenRef.current) {
           ch.send({ type: "broadcast", event: "read", payload: { role, studentId } });
           updateMessages(prev => prev.map(m => m.senderRole !== role ? { ...m, deliveryStatus: "read" } : m));
           setUnread(0); clearUnreadCount(studentId); onUnreadChange?.(studentId, 0);
+          await markReadInDB();
         }
       }
       if (status === "CLOSED" || status === "CHANNEL_ERROR") {
@@ -298,7 +387,7 @@ export default function ChatWindow({
     });
 
     channelRef.current = ch;
-  }, [CHANNEL, studentId, role, studentName, flushQueue, updateMessages, onUnreadChange]);
+  }, [CHANNEL, studentId, role, studentName, flushQueue, fetchUnreadFromDB, markReadInDB, updateMessages, onUnreadChange]);
 
   useEffect(() => {
     subscribe();
@@ -326,7 +415,8 @@ export default function ChatWindow({
     channelRef.current.send({ type: "broadcast", event: "read", payload: { role, studentId } });
     setUnread(0); clearUnreadCount(studentId); onUnreadChange?.(studentId, 0);
     updateMessages(prev => prev.map(m => m.senderRole !== role ? { ...m, deliveryStatus: "read" } : m));
-  }, [open, conn, role, studentId, updateMessages, onUnreadChange]);
+    markReadInDB();
+  }, [open, conn, role, studentId, updateMessages, onUnreadChange, markReadInDB]);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
@@ -359,6 +449,9 @@ export default function ChatWindow({
     updateMessages(prev => [...prev, msg]);
     setInput(""); setMsgType("text");
 
+    // Always persist to DB regardless of connection state
+    await saveMessageToDB(msg);
+
     if (conn === "connected" && channelRef.current) {
       try {
         await channelRef.current.send({ type: "broadcast", event: "message", payload: msg });
@@ -368,7 +461,7 @@ export default function ChatWindow({
       }
     } else {
       setOfflineQueue(prev => { const nq = [...prev, msg]; saveQueue(studentId, nq); return nq; });
-      toast.info(L(lang, "Offline: Message will send when reconnected.", "Offline: இணைந்தவுடன் அனுப்பப்படும்."), { duration: 3000 });
+      toast.info(L(lang, "Offline: Message saved & will broadcast when reconnected.", "Offline: Message சேமிக்கப்பட்டது, இணைந்தவுடன் அனுப்பப்படும்."), { duration: 3000 });
     }
     setSending(false);
   };
