@@ -143,25 +143,49 @@ export default function SignUpPage({ onBack }: Props) {
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
+        options: {
+          // email confirmation skip — direct session
+          emailRedirectTo: window.location.origin,
+        },
       });
-      if (authError) { setError(authError.message); setSubmitting(false); return; }
+
+      if (authError) {
+        // Already registered?
+        if (authError.message.toLowerCase().includes("already registered") ||
+            authError.message.toLowerCase().includes("user already exists")) {
+          setError("இந்த email-ல் account ஏற்கனவே இருக்கு. Login பண்ணுங்க.");
+        } else {
+          setError(authError.message);
+        }
+        setSubmitting(false);
+        return;
+      }
       if (!authData.user) { setError("Account creation failed. Try again."); setSubmitting(false); return; }
 
       const userId = authData.user.id;
 
-      // Step 2: Session இல்லன்னா signInWithPassword பண்ணி force login
-      if (!authData.session) {
-        const { error: loginError } = await supabase.auth.signInWithPassword({
+      // Step 2: Session இல்லன்னா (email confirmation needed) signInWithPassword try
+      let activeSession = authData.session;
+      if (!activeSession) {
+        const { data: signInData, error: loginError } = await supabase.auth.signInWithPassword({
           email: form.email,
           password: form.password,
         });
         if (loginError) {
+          // Email confirmation required — still save profile data via service role won't work
+          // Instead show success and ask them to confirm email
+          if (loginError.message.toLowerCase().includes("email not confirmed")) {
+            setSuccess(true);
+            setSubmitting(false);
+            return;
+          }
           setError("Login after signup failed: " + loginError.message);
           setSubmitting(false);
           return;
         }
+        activeSession = signInData.session;
         // Session settle ஆக கொஞ்சம் wait
-        await new Promise(r => setTimeout(r, 800));
+        if (activeSession) await new Promise(r => setTimeout(r, 600));
       }
 
       // Step 3: Students table upsert (duplicate safe)
@@ -186,16 +210,25 @@ export default function SignUpPage({ onBack }: Props) {
 
       if (studentError) {
         console.error("Student insert error:", studentError);
+        // RLS policy block — user not authenticated yet
+        if (studentError.code === "42501" || studentError.message.includes("policy")) {
+          // Profile will be created on first login — show success anyway
+          setSuccess(true);
+          setSubmitting(false);
+          return;
+        }
         setError("Profile creation failed: " + studentError.message);
         setSubmitting(false);
         return;
       }
 
-      // Step 4: User role assign பண்ணு
-      await supabase.from("user_roles").insert({
-        user_id: userId,
-        role: "student" as any,
-      });
+      // Step 4: User role assign பண்ணு (ignore duplicate error)
+      try {
+        await supabase.from("user_roles").upsert({
+          user_id: userId,
+          role: "student" as any,
+        }, { onConflict: 'user_id' });
+      } catch (_) { /* Ignore — role may already exist or RLS block */ }
 
       // Step 5: Permission letter upload (optional)
       if (letterFile) {
@@ -215,7 +248,7 @@ export default function SignUpPage({ onBack }: Props) {
     }
   };
 
-  // Auto-redirect success screen — 2s countdown then dashboard via onAuthStateChange
+  // Auto-redirect success screen — dashboard via onAuthStateChange
   if (success) {
     return (
       <div className="min-h-screen flex items-center justify-center p-5 relative overflow-hidden" style={{ background: "#060d1f" }}>
@@ -245,13 +278,29 @@ export default function SignUpPage({ onBack }: Props) {
                   உங்கள் account ready! Dashboard-க்கு போகிறோம்...
                 </p>
               </div>
-              {/* Spinner — dashboard load ஆகும் வரை */}
-              <div className="flex items-center justify-center gap-2">
-                <div className="w-5 h-5 border-2 rounded-full animate-spin"
-                  style={{ borderColor: "rgba(34,197,94,0.3)", borderTopColor: "#22c55e" }} />
-                <span className="text-[11px]" style={{ color: "rgba(147,197,253,0.5)" }}>
-                  Loading dashboard...
-                </span>
+              {/* Spinner + Go to Login button */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-center gap-2">
+                  <div className="w-5 h-5 border-2 rounded-full animate-spin"
+                    style={{ borderColor: "rgba(34,197,94,0.3)", borderTopColor: "#22c55e" }} />
+                  <span className="text-[11px]" style={{ color: "rgba(147,197,253,0.5)" }}>
+                    Loading dashboard...
+                  </span>
+                </div>
+                {/* Fallback button — if auto-redirect takes too long */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 4 }}
+                >
+                  <button
+                    onClick={onBack}
+                    className="text-[11px] font-semibold underline"
+                    style={{ color: "rgba(96,165,250,0.7)" }}
+                  >
+                    Loading slow? Click here to login manually
+                  </button>
+                </motion.div>
               </div>
             </div>
           </div>

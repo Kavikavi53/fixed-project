@@ -74,6 +74,7 @@ export function useStore() {
       supabase.from("payment_history").select("*").order("created_at", { ascending: false }),
     ]);
 
+    if (studentsRes.error) console.error("[store] students fetch error:", studentsRes.error);
     if (studentsRes.data) {
       setStudents(studentsRes.data);
       localStorage.setItem("amv_students", JSON.stringify(studentsRes.data));

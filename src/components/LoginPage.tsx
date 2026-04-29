@@ -60,7 +60,23 @@ export default function LoginPage({ onLogin, onSignUp, lang = "en" }: Props) {
     setSubmitting(true);
     setError("");
     const result = await onLogin(email, password);
-    if (!result.success) setError(result.error || ta("Login failed. Check credentials.", "Login தோல்வியடைந்தது."));
+    if (!result.success) {
+      // User-friendly Tamil/English error messages
+      const raw = result.error?.toLowerCase() ?? "";
+      let msg = result.error ?? ta("Login failed. Check credentials.", "Login தோல்வியடைந்தது.");
+      if (raw.includes("invalid login") || raw.includes("invalid credentials") || raw.includes("wrong password")) {
+        msg = ta("Incorrect email or password. Please try again.", "Email அல்லது password தவறு. மீண்டும் முயலுங்க.");
+      } else if (raw.includes("email not confirmed")) {
+        msg = ta("Please confirm your email first. Check your inbox.", "உங்கள் email-ஐ confirm பண்ணுங்க. Inbox check பண்ணுங்க.");
+      } else if (raw.includes("too many requests") || raw.includes("rate limit")) {
+        msg = ta("Too many attempts. Please wait a moment.", "அதிக முயற்சி. சிறிது நேரம் காத்திருங்க.");
+      } else if (raw.includes("network") || raw.includes("fetch")) {
+        msg = ta("Network error. Check your connection.", "Network பிரச்சனை. Connection சரிபாருங்க.");
+      } else if (raw.includes("user not found") || raw.includes("no user")) {
+        msg = ta("No account found with this email. Please sign up.", "இந்த email-ல் account இல்ல. Sign up பண்ணுங்க.");
+      }
+      setError(msg);
+    }
     setSubmitting(false);
   };
 

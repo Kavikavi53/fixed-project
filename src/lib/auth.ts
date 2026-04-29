@@ -23,10 +23,16 @@ export function useAuth() {
 
   const resolveRole = useCallback(async (user: User, retryCount = 0) => {
     try {
-      const { data: roles } = await supabase
+      const { data: roles, error: rolesError } = await supabase
         .from("user_roles")
         .select("role")
         .eq("user_id", user.id);
+
+      // If query fails (network / RLS), retry
+      if (rolesError && retryCount < 5) {
+        retryRef.current = setTimeout(() => resolveRole(user, retryCount + 1), 1500);
+        return;
+      }
 
       const isAdmin = roles?.some(r => r.role === "admin") ?? false;
       const role: UserRole = isAdmin ? "admin" : "student";
@@ -51,10 +57,13 @@ export function useAuth() {
             .maybeSingle();
 
           if (byEmail) {
-            await supabase
-              .from("students")
-              .update({ user_id: user.id })
-              .eq("id", byEmail.id);
+            // user_id link பண்ணு (ignore errors — RLS or duplicate)
+            try {
+              await supabase
+                .from("students")
+                .update({ user_id: user.id })
+                .eq("id", byEmail.id);
+            } catch (_) { /* ignore */ }
             studentId = byEmail.id;
           }
         }
@@ -67,10 +76,15 @@ export function useAuth() {
           return;
         }
 
-        // 30s-க்கு பிறகும் இல்லன்னா signOut பண்ணி login-க்கு அனுப்பு
+        // 30s-க்கு பிறகும் இல்லன்னா — loading false பண்ணி profile setup காட்டு
+        // signOut வேண்டாம்! User logged in ஆனா profile இல்லன்னா ProfileSetupLoader காட்டும்
         if (!studentId) {
-          await supabase.auth.signOut();
-          setAppUser(null);
+          setAppUser({
+            id: user.id,
+            email: user.email ?? "",
+            role,
+            studentId: undefined,
+          });
           setLoading(false);
           return;
         }
@@ -88,25 +102,40 @@ export function useAuth() {
       if (retryCount < 20) {
         retryRef.current = setTimeout(() => resolveRole(user, retryCount + 1), 1500);
       } else {
+        // Give up retrying — set user without studentId so they see the app
+        setAppUser({
+          id: user.id,
+          email: user.email ?? "",
+          role: "student",
+          studentId: undefined,
+        });
         setLoading(false);
       }
     }
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return;
       const user = session?.user ?? null;
       setSupabaseUser(user);
       if (user) {
         setLoading(true);
-        setTimeout(() => resolveRole(user), 500);
+        // Small delay to let DB writes settle after signup
+        setTimeout(() => {
+          if (mounted) resolveRole(user);
+        }, 300);
       } else {
+        if (retryRef.current) clearTimeout(retryRef.current);
         setAppUser(null);
         setLoading(false);
       }
     });
 
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
       const user = session?.user ?? null;
       setSupabaseUser(user);
       if (user) {
@@ -117,6 +146,7 @@ export function useAuth() {
     });
 
     return () => {
+      mounted = false;
       subscription.unsubscribe();
       if (retryRef.current) clearTimeout(retryRef.current);
     };
