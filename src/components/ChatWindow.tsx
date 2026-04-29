@@ -1,13 +1,13 @@
 /**
- * ChatWindow.tsx — Ultra Pro Max Real-Time Chat
+ * ChatWindow.tsx — Pro Level Real-Time Chat (FULLY FIXED)
  *
  * FIXES:
- * 1. Messages isolated per-student channel (student A msg never in student B chat)
- * 2. Offline queue — messages auto-send when reconnected
- * 3. Per-student unread badge API (admin sidebar)
- * 4. Real-time toast notifications
- * 5. WhatsApp-style: sending/sent/delivered/read status icons
- * 6. Auto-reconnect on disconnect
+ * 1. subscribeDB: NO server-side filter (avoids REPLICA IDENTITY issue) → client-side filter
+ * 2. fetchHistoryFromDB: always loads ALL messages from DB on connect (full refresh)
+ * 3. Admin → Student: both broadcast + DB postgres_changes deliver reliably
+ * 4. Student → Admin: both broadcast + DB postgres_changes deliver reliably
+ * 5. Offline: messages saved to DB → on reconnect DB listener picks them up
+ * 6. Student floating chat: unread badge + toast + messages shown on open
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -31,7 +31,7 @@ export interface Message {
   id: string;
   senderId: string;
   senderRole: Role;
-  studentId: string; // KEY: isolate per student
+  studentId: string;
   text: string;
   type: MsgType;
   deliveryStatus: DeliveryStatus;
@@ -59,7 +59,7 @@ const MSG_META: Record<MsgType, { en: string; ta: string; Icon: React.ElementTyp
   contact_request: { en: "Contact Admin", ta: "Admin தொடர்பு",  Icon: Phone,         badge: "bg-rose-500/10 text-rose-600" },
 };
 
-// ── LocalStorage helpers (keyed by studentId) ─────────────────────────────────
+// ── LocalStorage helpers ───────────────────────────────────────────────────────
 const STORAGE_KEY = (sid: string) => `amv_chat_msgs_${sid}`;
 const QUEUE_KEY   = (sid: string) => `amv_chat_queue_${sid}`;
 const UNREAD_KEY  = (sid: string) => `amv_chat_unread_${sid}`;
@@ -92,7 +92,7 @@ function clearUnreadCount(sid: string) {
   try { localStorage.removeItem(UNREAD_KEY(sid)); } catch {}
 }
 
-// ── Time helpers ──────────────────────────────────────────────────────────────
+// ── Time helpers ───────────────────────────────────────────────────────────────
 function fmtTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
@@ -114,7 +114,7 @@ function groupByDate(msgs: Message[]) {
   return groups;
 }
 
-// ── Delivery icon (WhatsApp style) ────────────────────────────────────────────
+// ── Delivery icon ──────────────────────────────────────────────────────────────
 function DeliveryIcon({ status }: { status: DeliveryStatus }) {
   if (status === "sending")   return <Clock className="w-3 h-3 text-muted-foreground/40" />;
   if (status === "sent")      return <Check className="w-3 h-3 text-muted-foreground/60" />;
@@ -122,7 +122,7 @@ function DeliveryIcon({ status }: { status: DeliveryStatus }) {
   return <CheckCheck className="w-3 h-3 text-primary" />;
 }
 
-// ── Message Bubble ────────────────────────────────────────────────────────────
+// ── Message Bubble ─────────────────────────────────────────────────────────────
 function Bubble({ msg, isMine, lang }: { msg: Message; isMine: boolean; lang: "en" | "ta" }) {
   const { Icon, badge, en, ta } = MSG_META[msg.type];
   return (
@@ -169,7 +169,7 @@ function TypingDots() {
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Main Component ─────────────────────────────────────────────────────────────
 export default function ChatWindow({
   studentId, studentName, role, userId, lang = "en", onClose, floating = false, onUnreadChange,
 }: Props) {
@@ -178,21 +178,29 @@ export default function ChatWindow({
   const [msgType, setMsgType]           = useState<MsgType>("text");
   const [sending, setSending]           = useState(false);
   const [open, setOpen]                 = useState(!floating);
-  const [unread, setUnread]             = useState(0);
+  const [unread, setUnread]             = useState(() => getUnreadCount(studentId));
   const [conn, setConn]                 = useState<ConnState>("connecting");
   const [peerTyping, setPeerTyping]     = useState(false);
   const [showDown, setShowDown]         = useState(false);
   const [offlineQueue, setOfflineQueue] = useState<Message[]>(() => loadQueue(studentId));
 
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const scrollRef   = useRef<HTMLDivElement>(null);
-  const channelRef  = useRef<any>(null);
-  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isOpenRef   = useRef(open);
-  isOpenRef.current = open;
+  const bottomRef    = useRef<HTMLDivElement>(null);
+  const scrollRef    = useRef<HTMLDivElement>(null);
+  const channelRef   = useRef<any>(null);
+  const dbChannelRef = useRef<any>(null);
+  const typingTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isOpenRef    = useRef(open);
+  isOpenRef.current  = open;
 
-  const CHANNEL = `amv_chat_v2_${studentId}`;
+  // Deduplicate: track all message IDs we've already processed
+  const seenIdsRef = useRef<Set<string>>(new Set(loadMessages(studentId).map(m => m.id)));
+
+  // The other side's role
+  const otherRole: Role = role === "admin" ? "student" : "admin";
+
+  // Both sides join the SAME broadcast channel
+  const BROADCAST_CHANNEL = `amv_chat_v3_${studentId}`;
 
   const updateMessages = useCallback((updater: (prev: Message[]) => Message[]) => {
     setMessages(prev => {
@@ -202,9 +210,34 @@ export default function ChatWindow({
     });
   }, [studentId]);
 
-  // ── DB helpers ─────────────────────────────────────────────────────────────
+  // ── Ingest an incoming message (deduped) ────────────────────────────────────
+  const ingestMessage = useCallback((msg: Message) => {
+    if (seenIdsRef.current.has(msg.id)) return;
+    seenIdsRef.current.add(msg.id);
 
-  /** Persist a message to chat_messages table */
+    updateMessages(prev => {
+      if (prev.some(m => m.id === msg.id)) return prev;
+      const next = [...prev, { ...msg, deliveryStatus: "delivered" as DeliveryStatus }];
+      return next.sort((a, b) => a.ts - b.ts);
+    });
+
+    // Show notification only for messages from the other side
+    if (msg.senderRole !== role) {
+      if (!isOpenRef.current) {
+        const newCount = getUnreadCount(studentId) + 1;
+        setUnread(newCount);
+        setUnreadCount(studentId, newCount);
+        onUnreadChange?.(studentId, newCount);
+        const label = role === "admin" ? studentName : "Admin";
+        toast(`💬 ${label}`, {
+          description: msg.text.slice(0, 70) + (msg.text.length > 70 ? "…" : ""),
+          duration: 5000,
+        });
+      }
+    }
+  }, [studentId, role, studentName, updateMessages, onUnreadChange]);
+
+  // ── DB helpers ──────────────────────────────────────────────────────────────
   const saveMessageToDB = useCallback(async (msg: Message) => {
     try {
       await supabase.from("chat_messages").insert({
@@ -221,69 +254,71 @@ export default function ChatWindow({
     }
   }, []);
 
-  /** Fetch unread messages from DB (sent by the OTHER role) and merge into state */
-  const fetchUnreadFromDB = useCallback(async () => {
+  /**
+   * Load ALL messages for this student from DB and merge.
+   * Called on connect/reconnect to catch messages missed while offline.
+   */
+  const fetchHistoryFromDB = useCallback(async () => {
     try {
-      const senderRole = role === "admin" ? "student" : "admin";
       const { data, error } = await supabase
         .from("chat_messages")
         .select("*")
         .eq("student_id", studentId)
-        .eq("sender_role", senderRole)
-        .eq("is_read", false)
         .order("created_at", { ascending: true });
 
       if (error || !data?.length) return;
 
-      const incoming: Message[] = data.map(row => ({
+      const dbMessages: Message[] = data.map(row => ({
         id: row.id,
         senderId: row.sender_id ?? "",
         senderRole: row.sender_role as Role,
         studentId: row.student_id,
         text: row.message,
         type: row.message_type as MsgType,
-        deliveryStatus: "delivered" as DeliveryStatus,
+        deliveryStatus: (row.sender_role === role ? "sent" : "delivered") as DeliveryStatus,
         ts: new Date(row.created_at).getTime(),
       }));
 
-      updateMessages(prev => {
+      setMessages(prev => {
         const existingIds = new Set(prev.map(m => m.id));
-        const newMsgs = incoming.filter(m => !existingIds.has(m.id));
-        if (!newMsgs.length) return prev;
+        const newMsgs = dbMessages.filter(m => !existingIds.has(m.id));
+        // Add all to seenIds
+        dbMessages.forEach(m => seenIdsRef.current.add(m.id));
 
-        // If chat is closed, count as unread
+        // Count unread for badge
         if (!isOpenRef.current) {
-          const count = newMsgs.length;
-          setUnread(u => u + count);
-          const cur = getUnreadCount(studentId);
-          setUnreadCount(studentId, cur + count);
-          onUnreadChange?.(studentId, cur + count);
+          const unreadCount = data.filter(r => r.sender_role === otherRole && !r.is_read).length;
+          if (unreadCount > 0) {
+            setUnread(unreadCount);
+            setUnreadCount(studentId, unreadCount);
+            onUnreadChange?.(studentId, unreadCount);
+          }
         }
 
-        return [...prev, ...newMsgs];
+        if (!newMsgs.length) return prev;
+        const merged = [...prev, ...newMsgs].sort((a, b) => a.ts - b.ts);
+        saveMessages(studentId, merged);
+        return merged;
       });
     } catch (err) {
-      console.error("[ChatWindow] fetchUnreadFromDB error:", err);
+      console.error("[ChatWindow] fetchHistoryFromDB error:", err);
     }
-  }, [role, studentId, updateMessages, onUnreadChange]);
+  }, [studentId, role, otherRole, onUnreadChange]);
 
-  /** Mark all messages from the OTHER role as read in DB */
   const markReadInDB = useCallback(async () => {
     try {
-      const senderRole = role === "admin" ? "student" : "admin";
       await supabase
         .from("chat_messages")
         .update({ is_read: true })
         .eq("student_id", studentId)
-        .eq("sender_role", senderRole)
+        .eq("sender_role", otherRole)
         .eq("is_read", false);
     } catch (err) {
       console.error("[ChatWindow] markReadInDB error:", err);
     }
-  }, [role, studentId]);
+  }, [studentId, otherRole]);
 
   // ── Offline queue flush ─────────────────────────────────────────────────────
-
   const flushQueue = useCallback(async (ch: any) => {
     const q = loadQueue(studentId);
     if (!q.length) return;
@@ -293,86 +328,111 @@ export default function ChatWindow({
       const sent = { ...msg, deliveryStatus: "sent" as DeliveryStatus };
       try {
         await ch.send({ type: "broadcast", event: "message", payload: sent });
-        // Also persist queued messages that weren't saved yet
-        await saveMessageToDB(sent);
         updateMessages(prev => prev.map(m => m.id === msg.id ? sent : m));
       } catch {
         setOfflineQueue(prev => { const nq = [...prev, msg]; saveQueue(studentId, nq); return nq; });
       }
     }
-  }, [studentId, updateMessages, saveMessageToDB]);
+  }, [studentId, updateMessages]);
 
+  // ── DB Realtime: catches messages from OTHER side ───────────────────────────
+  // IMPORTANT: NO server-side filter to avoid REPLICA IDENTITY FULL requirement.
+  // Filter is done CLIENT-SIDE by studentId + senderRole.
+  const subscribeDB = useCallback(() => {
+    if (dbChannelRef.current) { supabase.removeChannel(dbChannelRef.current); dbChannelRef.current = null; }
+
+    const ch = supabase
+      .channel(`amv_db_v3_${role}_${studentId}`)
+      .on(
+        "postgres_changes" as any,
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "chat_messages",
+          // No server filter — client-side check below handles it
+        },
+        (payload: any) => {
+          const row = payload.new;
+          // CLIENT-SIDE FILTER: correct student + from the other role only
+          if (row.student_id !== studentId) return;
+          if (row.sender_role !== otherRole) return;
+
+          const msg: Message = {
+            id: row.id,
+            senderId: row.sender_id ?? "",
+            senderRole: row.sender_role as Role,
+            studentId: row.student_id,
+            text: row.message,
+            type: row.message_type as MsgType,
+            deliveryStatus: "delivered",
+            ts: new Date(row.created_at).getTime(),
+          };
+          ingestMessage(msg);
+        }
+      )
+      .subscribe();
+
+    dbChannelRef.current = ch;
+  }, [studentId, role, otherRole, ingestMessage]);
+
+  // ── Broadcast channel: instant real-time ───────────────────────────────────
   const subscribe = useCallback(() => {
     if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; }
     if (reconnTimer.current) { clearTimeout(reconnTimer.current); reconnTimer.current = null; }
     setConn("connecting");
 
-    const ch = supabase.channel(CHANNEL, { config: { broadcast: { self: false, ack: false } } });
+    const ch = supabase.channel(BROADCAST_CHANNEL, {
+      config: { broadcast: { self: false, ack: false } },
+    });
 
+    // Incoming messages from the other side
     ch.on("broadcast", { event: "message" }, ({ payload }: { payload: Message }) => {
-      // KEY FIX: Only process messages for THIS student
       if (payload.studentId !== studentId) return;
-      
-      updateMessages(prev => {
-        if (prev.some(m => m.id === payload.id)) return prev;
-        return [...prev, { ...payload, deliveryStatus: "delivered" }];
-      });
-
+      if (payload.senderRole === role) return; // ignore own echoes
+      ingestMessage(payload);
       // Send delivery receipt back
       ch.send({ type: "broadcast", event: "delivered", payload: { msgId: payload.id, role } });
-
-      if (payload.senderRole !== role) {
-        if (!isOpenRef.current) {
-          setUnread(u => u + 1);
-          const cur = getUnreadCount(studentId);
-          setUnreadCount(studentId, cur + 1);
-          onUnreadChange?.(studentId, cur + 1);
-          const label = role === "admin" ? studentName : "Admin";
-          toast(`💬 ${label}`, {
-            description: payload.text.slice(0, 70) + (payload.text.length > 70 ? "…" : ""),
-            duration: 5000,
-          });
-        }
-      }
     });
 
+    // Typing indicator
     ch.on("broadcast", { event: "typing" }, ({ payload }: { payload: { role: Role; studentId: string } }) => {
       if (payload.studentId !== studentId) return;
-      if (payload.role !== role) {
-        setPeerTyping(true);
-        if (typingTimer.current) clearTimeout(typingTimer.current);
-        typingTimer.current = setTimeout(() => setPeerTyping(false), 2500);
-      }
+      if (payload.role === role) return;
+      setPeerTyping(true);
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+      typingTimer.current = setTimeout(() => setPeerTyping(false), 2500);
     });
 
+    // Delivery receipt from other side
     ch.on("broadcast", { event: "delivered" }, ({ payload }: { payload: { msgId: string; role: Role } }) => {
-      if (payload.role !== role) {
-        updateMessages(prev =>
-          prev.map(m => m.id === payload.msgId && m.deliveryStatus === "sent" ? { ...m, deliveryStatus: "delivered" } : m)
-        );
-      }
+      if (payload.role === role) return;
+      updateMessages(prev =>
+        prev.map(m => m.id === payload.msgId && m.deliveryStatus === "sent" ? { ...m, deliveryStatus: "delivered" } : m)
+      );
     });
 
+    // Read receipt from other side
     ch.on("broadcast", { event: "read" }, ({ payload }: { payload: { role: Role; studentId: string } }) => {
       if (payload.studentId !== studentId) return;
-      if (payload.role !== role) {
-        updateMessages(prev => prev.map(m => m.senderRole === role ? { ...m, deliveryStatus: "read" } : m));
-      }
+      if (payload.role === role) return;
+      updateMessages(prev => prev.map(m => m.senderRole === role ? { ...m, deliveryStatus: "read" } : m));
     });
 
+    // Chat cleared
     ch.on("broadcast", { event: "clear" }, ({ payload }: { payload: { studentId: string } }) => {
       if (payload.studentId !== studentId) return;
       setMessages([]); clearMessages(studentId);
+      seenIdsRef.current.clear();
     });
 
     ch.subscribe(async (status: string) => {
       if (status === "SUBSCRIBED") {
         setConn("connected");
-        // 1. Flush offline queue (sends + persists queued msgs)
+        // 1. Flush offline queue (broadcasts queued messages)
         await flushQueue(ch);
-        // 2. Fetch any messages missed while offline from DB
-        await fetchUnreadFromDB();
-        // 3. If chat is open, mark everything as read
+        // 2. Load full history from DB (catches all missed messages)
+        await fetchHistoryFromDB();
+        // 3. Mark as read if chat is open
         if (isOpenRef.current) {
           ch.send({ type: "broadcast", event: "read", payload: { role, studentId } });
           updateMessages(prev => prev.map(m => m.senderRole !== role ? { ...m, deliveryStatus: "read" } : m));
@@ -387,34 +447,43 @@ export default function ChatWindow({
     });
 
     channelRef.current = ch;
-  }, [CHANNEL, studentId, role, studentName, flushQueue, fetchUnreadFromDB, markReadInDB, updateMessages, onUnreadChange]);
+  }, [BROADCAST_CHANNEL, studentId, role, flushQueue, fetchHistoryFromDB, markReadInDB, updateMessages, ingestMessage, onUnreadChange]);
 
+  // Mount: start both channels
   useEffect(() => {
     subscribe();
+    subscribeDB();
     return () => {
-      if (channelRef.current) supabase.removeChannel(channelRef.current);
-      if (reconnTimer.current) clearTimeout(reconnTimer.current);
-      if (typingTimer.current) clearTimeout(typingTimer.current);
+      if (channelRef.current)   supabase.removeChannel(channelRef.current);
+      if (dbChannelRef.current) supabase.removeChannel(dbChannelRef.current);
+      if (reconnTimer.current)  clearTimeout(reconnTimer.current);
+      if (typingTimer.current)  clearTimeout(typingTimer.current);
     };
-  }, [subscribe]);
+  }, [subscribe, subscribeDB]);
 
-  // Reload when admin switches student
+  // When admin switches student → reload state for new student
   useEffect(() => {
-    setMessages(loadMessages(studentId));
+    const saved = loadMessages(studentId);
+    setMessages(saved);
     setOfflineQueue(loadQueue(studentId));
-    setUnread(0);
+    seenIdsRef.current = new Set(saved.map(m => m.id));
+    setUnread(getUnreadCount(studentId));
     setPeerTyping(false);
   }, [studentId]);
 
+  // Auto-scroll
   useEffect(() => {
     if (open) setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
   }, [messages, open, peerTyping]);
 
+  // Mark read when chat opens
   useEffect(() => {
-    if (!open || !channelRef.current || conn !== "connected") return;
-    channelRef.current.send({ type: "broadcast", event: "read", payload: { role, studentId } });
+    if (!open) return;
     setUnread(0); clearUnreadCount(studentId); onUnreadChange?.(studentId, 0);
     updateMessages(prev => prev.map(m => m.senderRole !== role ? { ...m, deliveryStatus: "read" } : m));
+    if (channelRef.current && conn === "connected") {
+      channelRef.current.send({ type: "broadcast", event: "read", payload: { role, studentId } });
+    }
     markReadInDB();
   }, [open, conn, role, studentId, updateMessages, onUnreadChange, markReadInDB]);
 
@@ -440,16 +509,18 @@ export default function ChatWindow({
 
     const msg: Message = {
       id: uid(), senderId: userId, senderRole: role,
-      studentId,          // ← Every message tagged with studentId
+      studentId,
       text, type: msgType,
       deliveryStatus: conn === "connected" ? "sent" : "sending",
       ts: Date.now(),
     };
 
+    // Mark seen immediately (prevents re-ingesting via DB realtime)
+    seenIdsRef.current.add(msg.id);
     updateMessages(prev => [...prev, msg]);
     setInput(""); setMsgType("text");
 
-    // Always persist to DB regardless of connection state
+    // Always persist to DB — triggers postgres_changes on the other side
     await saveMessageToDB(msg);
 
     if (conn === "connected" && channelRef.current) {
@@ -461,7 +532,7 @@ export default function ChatWindow({
       }
     } else {
       setOfflineQueue(prev => { const nq = [...prev, msg]; saveQueue(studentId, nq); return nq; });
-      toast.info(L(lang, "Offline: Message saved & will broadcast when reconnected.", "Offline: Message சேமிக்கப்பட்டது, இணைந்தவுடன் அனுப்பப்படும்."), { duration: 3000 });
+      toast.info(L(lang, "Offline: Message saved & will send when reconnected.", "Offline: Message சேமிக்கப்பட்டது, இணைந்தவுடன் அனுப்பப்படும்."), { duration: 3000 });
     }
     setSending(false);
   };
@@ -473,6 +544,7 @@ export default function ChatWindow({
   const handleClear = () => {
     if (!channelRef.current) return;
     setMessages([]); clearMessages(studentId);
+    seenIdsRef.current.clear();
     channelRef.current.send({ type: "broadcast", event: "clear", payload: { studentId } });
     toast.success(L(lang, "Chat cleared", "Chat அழிக்கப்பட்டது"));
   };
@@ -485,7 +557,10 @@ export default function ChatWindow({
     conn, peerTyping, handleClear, onClose, offlineQueue,
   };
 
+  // ── Floating (Student portal) ───────────────────────────────────────────────
   if (floating) {
+    const lastAdminMsg = [...messages].reverse().find(m => m.senderRole === otherRole);
+
     return (
       <div className="fixed bottom-6 right-4 z-50 flex flex-col items-end gap-3">
         <AnimatePresence>
@@ -502,6 +577,21 @@ export default function ChatWindow({
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Latest admin message preview (only when chat is closed) */}
+        {!open && lastAdminMsg && (
+          <motion.button
+            initial={{ opacity: 0, x: 30 }}
+            animate={{ opacity: 1, x: 0 }}
+            onClick={() => setOpen(true)}
+            className="max-w-[240px] bg-card border border-border/60 rounded-2xl shadow-lg px-3 py-2 text-left hover:bg-secondary/80 transition-colors"
+          >
+            <p className="text-[10px] font-bold text-primary mb-0.5">Admin</p>
+            <p className="text-xs text-foreground truncate">{lastAdminMsg.text}</p>
+          </motion.button>
+        )}
+
+        {/* Chat toggle button */}
         <motion.button
           whileTap={{ scale: 0.84 }} whileHover={{ scale: 1.08 }}
           onClick={() => {
@@ -530,6 +620,7 @@ export default function ChatWindow({
     );
   }
 
+  // ── Embedded (Admin panel) ──────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full min-h-[420px] rounded-2xl border border-border/50 overflow-hidden glass-card">
       <ChatBody {...bodyProps} />
@@ -537,7 +628,7 @@ export default function ChatWindow({
   );
 }
 
-// ── ChatBody ──────────────────────────────────────────────────────────────────
+// ── ChatBody ───────────────────────────────────────────────────────────────────
 interface BodyProps {
   messages: Message[]; role: Role; userId: string; studentName: string; lang: "en" | "ta";
   input: string; handleInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;

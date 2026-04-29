@@ -75,6 +75,10 @@ export default function AdminDashboard({
   const [showMyPaid, setShowMyPaid] = useState(false);
   // Per-student unread counts for sidebar badges
   const [unreadMap, setUnreadMap] = useState<Record<string, number>>({});
+  // Per-student last message timestamp (for sorting sidebar list)
+  const [lastMsgMap, setLastMsgMap] = useState<Record<string, number>>({});
+  const chatStudentRef = useRef<Student | null>(null);
+  chatStudentRef.current = chatStudent;
 
   // Initialize unread counts from localStorage on mount
   useEffect(() => {
@@ -95,6 +99,75 @@ export default function AdminDashboard({
       if (data?.user?.id) setAdminUserId(data.user.id);
     });
   }, []);
+
+  // ── Global Admin Realtime Listener ──────────────────────────────────────────
+  // Listens to DB inserts on chat_messages for ALL students (sent by student role).
+  // This ensures admin gets notified even when offline / on a different tab.
+  useEffect(() => {
+    if (!students.length) return;
+
+    // 1. On mount: fetch all unread student→admin messages from DB
+    const fetchAllUnread = async () => {
+      try {
+        const { data } = await supabase
+          .from("chat_messages")
+          .select("student_id, created_at")
+          .eq("sender_role", "student")
+          .eq("is_read", false)
+          .order("created_at", { ascending: false });
+
+        if (!data?.length) return;
+        const countMap: Record<string, number> = {};
+        const tsMap: Record<string, number> = {};
+        data.forEach(row => {
+          countMap[row.student_id] = (countMap[row.student_id] ?? 0) + 1;
+          if (!tsMap[row.student_id]) tsMap[row.student_id] = new Date(row.created_at).getTime();
+        });
+        setUnreadMap(prev => {
+          const next = { ...prev };
+          Object.entries(countMap).forEach(([sid, n]) => { next[sid] = n; });
+          return next;
+        });
+        setLastMsgMap(prev => ({ ...prev, ...tsMap }));
+      } catch (e) {
+        console.error("[AdminDashboard] fetchAllUnread error:", e);
+      }
+    };
+    fetchAllUnread();
+
+    // 2. Realtime subscription: new student messages → update badge + toast + sort
+    const channel = supabase
+      .channel("admin_global_chat_listener", { config: { broadcast: { self: false } } })
+      .on(
+        "postgres_changes" as any,
+        { event: "INSERT", schema: "public", table: "chat_messages", filter: "sender_role=eq.student" },
+        (payload: any) => {
+          const row = payload.new;
+          const sid: string = row.student_id;
+          const ts: number = new Date(row.created_at).getTime();
+          const student = students.find(s => s.id === sid);
+
+          // Update last message timestamp for sorting
+          setLastMsgMap(prev => ({ ...prev, [sid]: ts }));
+
+          // If this student's chat is already open and visible, don't bump unread
+          const isOpen = chatStudentRef.current?.id === sid;
+          if (!isOpen) {
+            setUnreadMap(prev => ({ ...prev, [sid]: (prev[sid] ?? 0) + 1 }));
+            // Toast notification
+            const name = student?.full_name ?? "Student";
+            toast(`💬 ${name}`, {
+              description: (row.message ?? "").slice(0, 70) + ((row.message?.length ?? 0) > 70 ? "…" : ""),
+              duration: 5000,
+              action: { label: "Open", onClick: () => student && setChatStudent(student) },
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [students]);
 
   // Flash highlight helper — row-ஐ briefly highlight பண்ணும்
   const flashRow = useCallback((id: string) => {
@@ -595,10 +668,17 @@ export default function AdminDashboard({
                 {students.length === 0 && (
                   <p className="text-center text-muted-foreground text-xs py-8">{T(lang,"No students","மாணவர் இல்லை")}</p>
                 )}
-                {students.map(s => (
+                {[...students].sort((a, b) => {
+                  const ua = unreadMap[a.id] ?? 0, ub = unreadMap[b.id] ?? 0;
+                  if (ua !== ub) return ub - ua;
+                  return (lastMsgMap[b.id] ?? 0) - (lastMsgMap[a.id] ?? 0);
+                }).map(s => (
                   <button
                     key={s.id}
-                    onClick={() => setChatStudent(s)}
+                    onClick={() => {
+                      setChatStudent(s);
+                      setUnreadMap(prev => ({ ...prev, [s.id]: 0 }));
+                    }}
                     className={`w-full text-left px-3 py-2.5 flex items-center gap-2.5 hover:bg-secondary/60 transition-colors border-b border-border/30 ${chatStudent?.id === s.id ? "bg-primary/10 border-l-2 border-l-primary" : ""}`}
                   >
                     <div className="relative w-8 h-8 shrink-0">
@@ -613,7 +693,9 @@ export default function AdminDashboard({
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className={`text-xs font-medium truncate ${(unreadMap[s.id] ?? 0) > 0 ? "font-bold text-foreground" : ""}`}>{s.full_name}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{s.auto_id}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {lastMsgMap[s.id] ? new Date(lastMsgMap[s.id]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : s.auto_id}
+                      </p>
                     </div>
                   </button>
                 ))}
