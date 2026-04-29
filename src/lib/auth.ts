@@ -76,17 +76,40 @@ export function useAuth() {
           return;
         }
 
-        // 30s-க்கு பிறகும் இல்லன்னா — loading false பண்ணி profile setup காட்டு
-        // signOut வேண்டாம்! User logged in ஆனா profile இல்லன்னா ProfileSetupLoader காட்டும்
+        // 30s-க்கு பிறகும் இல்லன்னா — last attempt: create student row
         if (!studentId) {
-          setAppUser({
-            id: user.id,
-            email: user.email ?? "",
-            role,
-            studentId: undefined,
-          });
-          setLoading(false);
-          return;
+          try {
+            const { data: newStudent, error: createErr } = await supabase
+              .from("students")
+              .upsert({
+                user_id: user.id,
+                email: user.email ?? "",
+                full_name: user.user_metadata?.full_name ?? (user.email?.split("@")[0] ?? "Student"),
+                student_phone: user.user_metadata?.student_phone ?? "",
+                batch: (user.user_metadata?.batch ?? "2026") as any,
+                stream: (user.user_metadata?.stream ?? "Mathematics") as any,
+                auto_id: "",
+                payment_status: "pending" as any,
+                account_status: "active" as any,
+              } as any, { onConflict: "user_id" })
+              .select("id")
+              .maybeSingle();
+            if (!createErr && newStudent) {
+              studentId = newStudent.id;
+            }
+          } catch (_) { /* ignore */ }
+
+          // Still nothing — show ProfileSetupLoader
+          if (!studentId) {
+            setAppUser({
+              id: user.id,
+              email: user.email ?? "",
+              role,
+              studentId: undefined,
+            });
+            setLoading(false);
+            return;
+          }
         }
       }
 

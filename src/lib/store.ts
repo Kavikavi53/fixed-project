@@ -75,9 +75,23 @@ export function useStore() {
     ]);
 
     if (studentsRes.error) console.error("[store] students fetch error:", studentsRes.error);
-    if (studentsRes.data) {
+    if (studentsRes.data && studentsRes.data.length > 0) {
       setStudents(studentsRes.data);
       localStorage.setItem("amv_students", JSON.stringify(studentsRes.data));
+    } else if (studentsRes.data && studentsRes.data.length === 0) {
+      // RLS may be returning empty for non-admin — try fetching own record explicitly
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: ownData } = await supabase
+          .from("students")
+          .select("*")
+          .or(`user_id.eq.${user.id},email.eq.${user.email}`)
+          .limit(1);
+        if (ownData && ownData.length > 0) {
+          setStudents(ownData);
+          localStorage.setItem("amv_students", JSON.stringify(ownData));
+        }
+      }
     }
     if (annRes.data) {
       setAnnouncements(annRes.data);

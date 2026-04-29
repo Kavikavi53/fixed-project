@@ -146,6 +146,12 @@ export default function SignUpPage({ onBack }: Props) {
         options: {
           // email confirmation skip — direct session
           emailRedirectTo: window.location.origin,
+          data: {
+            full_name: form.full_name,
+            student_phone: form.student_phone,
+            batch: form.batch,
+            stream: form.stream,
+          },
         },
       });
 

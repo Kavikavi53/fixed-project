@@ -45,6 +45,18 @@ export default function Index() {
   const prevAnnouncementsRef = useRef<Announcement[]>([]);
   const initialLoadDone = useRef(false);
 
+  // ── Re-fetch store whenever user logs in (fixes new signup → dashboard) ──
+  const prevUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (user?.id && user.id !== prevUserIdRef.current) {
+      prevUserIdRef.current = user.id;
+      // Give DB a moment to settle then fetch
+      const t = setTimeout(() => store.fetchAll(), 800);
+      return () => clearTimeout(t);
+    }
+    if (!user) prevUserIdRef.current = null;
+  }, [user?.id]);
+
 
 
   // ── Realtime notifications: watch student changes ──
@@ -173,7 +185,7 @@ export default function Index() {
 
   const currentStudent = user.studentId
     ? store.students.find(s => s.id === user.studentId)
-    : store.students.find(s => s.email === user.email);
+    : store.students.find(s => s.user_id === user.id || s.email === user.email);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
