@@ -139,41 +139,80 @@ export default function SignUpPage({ onBack }: Props) {
     setError("");
 
     try {
+      // Step 1: Auth user create
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: form.email, password: form.password,
-        options: {
-          data: {
-            full_name: form.full_name, gender: form.gender || null,
-            address: form.address || null, dob: form.dob || null,
-            nic: form.nic || null, school_id: form.school_id || null,
-            batch: form.batch, stream: form.stream,
-            student_phone: form.student_phone,
-            parent_name: form.parent_name || null,
-            parent_phone: form.parent_phone || null,
-          }
-        }
+        email: form.email,
+        password: form.password,
       });
       if (authError) { setError(authError.message); setSubmitting(false); return; }
       if (!authData.user) { setError("Account creation failed. Try again."); setSubmitting(false); return; }
 
-      if (letterFile) {
-        const fileExt = letterFile.name.split(".").pop();
-        const fileName = `${authData.user.id}_permission_letter.${fileExt}`;
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from("permission-letters").upload(fileName, letterFile, { upsert: true });
-        if (!uploadError && uploadData) {
-          await new Promise(r => setTimeout(r, 1500));
-          await supabase.from("students").update({ permission_letter_url: uploadData.path }).eq("user_id", authData.user.id);
+      const userId = authData.user.id;
+
+      // Step 2: Session இல்லன்னா signInWithPassword பண்ணி force login
+      if (!authData.session) {
+        const { error: loginError } = await supabase.auth.signInWithPassword({
+          email: form.email,
+          password: form.password,
+        });
+        if (loginError) {
+          setError("Login after signup failed: " + loginError.message);
+          setSubmitting(false);
+          return;
         }
+        // Session settle ஆக கொஞ்சம் wait
+        await new Promise(r => setTimeout(r, 800));
       }
 
-      // signup success — auto login (signOut பண்ணாம, session இருக்கும்)
-      // Index.tsx onAuthStateChange → dashboard auto redirect
+      // Step 3: Students table upsert (duplicate safe)
+      const { error: studentError } = await supabase.from("students").upsert({
+        user_id: userId,
+        email: form.email,
+        full_name: form.full_name,
+        gender: form.gender || null,
+        address: form.address || null,
+        dob: form.dob || null,
+        nic: form.nic || null,
+        school_id: form.school_id || null,
+        batch: form.batch as any,
+        stream: form.stream as any,
+        student_phone: form.student_phone,
+        parent_name: form.parent_name || null,
+        parent_phone: form.parent_phone || null,
+        payment_status: 'pending' as any,
+        account_status: 'active' as any,
+        auto_id: '',
+      } as any, { onConflict: 'user_id' });
+
+      if (studentError) {
+        console.error("Student insert error:", studentError);
+        setError("Profile creation failed: " + studentError.message);
+        setSubmitting(false);
+        return;
+      }
+
+      // Step 4: User role assign பண்ணு
+      await supabase.from("user_roles").insert({
+        user_id: userId,
+        role: "student" as any,
+      });
+
+      // Step 5: Permission letter upload (optional)
+      if (letterFile) {
+        const fileExt = letterFile.name.split(".").pop();
+        const fileName = `${userId}_permission_letter.${fileExt}`;
+        await supabase.storage
+          .from("student-photos")
+          .upload(fileName, letterFile, { upsert: true });
+      }
+
+      // Step 6: Success! onAuthStateChange → dashboard auto redirect
       setSuccess(true);
+
     } catch (err: any) {
       setError(err?.message || "An unexpected error occurred");
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   // Auto-redirect success screen — 2s countdown then dashboard via onAuthStateChange

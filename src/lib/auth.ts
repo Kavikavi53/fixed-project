@@ -22,56 +22,75 @@ export function useAuth() {
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resolveRole = useCallback(async (user: User, retryCount = 0) => {
-    const { data: roles } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", user.id);
+    try {
+      const { data: roles } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id);
 
-    const isAdmin = roles?.some(r => r.role === "admin") ?? false;
-    const role: UserRole = isAdmin ? "admin" : "student";
+      const isAdmin = roles?.some(r => r.role === "admin") ?? false;
+      const role: UserRole = isAdmin ? "admin" : "student";
 
-    let studentId: string | undefined;
-    if (role === "student") {
-      const { data: byUserId } = await supabase
-        .from("students")
-        .select("id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      if (byUserId) {
-        studentId = byUserId.id;
-      } else if (user.email) {
-        const { data: byEmail } = await supabase
+      let studentId: string | undefined;
+      if (role === "student") {
+        // user_id-ல பாரு
+        const { data: byUserId } = await supabase
           .from("students")
           .select("id")
-          .eq("email", user.email)
+          .eq("user_id", user.id)
           .maybeSingle();
 
-        if (byEmail) {
-          await supabase
+        if (byUserId) {
+          studentId = byUserId.id;
+        } else if (user.email) {
+          // email-ல பாரு
+          const { data: byEmail } = await supabase
             .from("students")
-            .update({ user_id: user.id })
-            .eq("id", byEmail.id);
-          studentId = byEmail.id;
+            .select("id")
+            .eq("email", user.email)
+            .maybeSingle();
+
+          if (byEmail) {
+            await supabase
+              .from("students")
+              .update({ user_id: user.id })
+              .eq("id", byEmail.id);
+            studentId = byEmail.id;
+          }
+        }
+
+        // இன்னும் கிடைக்கல்லன்னா retry (max 20 × 1.5s = 30s)
+        if (!studentId && retryCount < 20) {
+          retryRef.current = setTimeout(() => {
+            resolveRole(user, retryCount + 1);
+          }, 1500);
+          return;
+        }
+
+        // 30s-க்கு பிறகும் இல்லன்னா signOut பண்ணி login-க்கு அனுப்பு
+        if (!studentId) {
+          await supabase.auth.signOut();
+          setAppUser(null);
+          setLoading(false);
+          return;
         }
       }
 
-      if (!studentId && retryCount < 8) {
-        retryRef.current = setTimeout(() => {
-          resolveRole(user, retryCount + 1);
-        }, 800);
-        return;
+      setAppUser({
+        id: user.id,
+        email: user.email ?? "",
+        role,
+        studentId,
+      });
+      setLoading(false);
+    } catch (e) {
+      console.error("resolveRole error:", e);
+      if (retryCount < 20) {
+        retryRef.current = setTimeout(() => resolveRole(user, retryCount + 1), 1500);
+      } else {
+        setLoading(false);
       }
-      // 8 retry-க்கு பிறகும் studentId இல்லாட்டா still setAppUser — Index.tsx handle பண்ணும்
     }
-
-    setAppUser({
-      id: user.id,
-      email: user.email ?? "",
-      role,
-      studentId,
-    });
-    setLoading(false);
   }, []);
 
   useEffect(() => {

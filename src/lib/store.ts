@@ -19,22 +19,7 @@ export interface AppUser {
   studentId?: string;
 }
 
-export async function runAutoPaymentLogic(isAdmin: boolean) {
-  if (!isAdmin) return;
-  const today = new Date().getDate();
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const key = `amv_pay_auto_${currentMonth}_d${today}`;
-  if (sessionStorage.getItem(key)) return;
-  sessionStorage.setItem(key, "1");
-  try {
-    if (today === 1) await (supabase.rpc as any)("auto_set_pending_start_of_month");
-    else if (today === 20) await (supabase.rpc as any)("auto_set_late_on_20th");
-    else if (today === 26) await (supabase.rpc as any)("auto_reset_on_26th");
-    else if (today > 20 && today < 26) await (supabase.rpc as any)("auto_set_late_on_20th");
-  } catch (e) {
-    console.warn("[AMV] Auto payment RPC not ready:", e);
-  }
-}
+
 
 function applyChange<T extends { id: string; created_at?: string }>(
   prev: T[],

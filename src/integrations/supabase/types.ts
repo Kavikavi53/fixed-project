@@ -175,9 +175,10 @@ export type Database = {
         Insert: {
           account_status?: Database["public"]["Enums"]["account_status"]
           address?: string | null
-          auto_id: string
+          auto_id?: string
           batch?: Database["public"]["Enums"]["student_batch"]
           created_at?: string
+          payment_marked_by?: string | null
           dob?: string | null
           email?: string | null
           full_name: string

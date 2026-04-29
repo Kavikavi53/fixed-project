@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/lib/auth";
-import { useStore, runAutoPaymentLogic } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import { useNotifications } from "@/hooks/useNotifications";
 import AccessCodePage from "@/components/AccessCodePage";
 import LoginPage from "@/components/LoginPage";
@@ -45,15 +45,7 @@ export default function Index() {
   const prevAnnouncementsRef = useRef<Announcement[]>([]);
   const initialLoadDone = useRef(false);
 
-  // Auto payment logic
-  useEffect(() => {
-    if (user?.role === "admin") {
-      runAutoPaymentLogic(true).then(() => {
-        setTimeout(() => store.fetchAll(), 1000);
-      });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.role]);
+
 
   // ── Realtime notifications: watch student changes ──
   useEffect(() => {
