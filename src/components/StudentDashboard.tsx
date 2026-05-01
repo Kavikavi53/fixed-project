@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   User, Phone, MapPin, GraduationCap, Calendar, CreditCard,
@@ -6,6 +6,7 @@ import {
   CheckCircle2, Clock, AlertTriangle, Smartphone, X,
   Zap, Shield, ArrowRight, Sparkles, TrendingUp,
 } from "lucide-react";
+import PaymentStatusCard from "./PaymentStatusCard";
 
 // Gender icons as inline SVG
 const MaleIcon = ({ className }: { className?: string }) => (
@@ -173,12 +174,10 @@ function OnlinePayModal({ open, onClose, lang }: { open: boolean; onClose: () =>
 }
 
 export default function StudentDashboard({ student, announcements, paymentHistory, lang = "en" }: Props) {
-  const studentPayments = paymentHistory.filter(p => p.student_id === student.id);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
   const [showPayModal, setShowPayModal] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
 
@@ -348,88 +347,12 @@ export default function StudentDashboard({ student, announcements, paymentHistor
         </div>
       </motion.div>
 
-      {/* ── PRO PAYMENT CARD ── */}
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.08 }}
-        className={`glass-card rounded-2xl overflow-hidden border bg-gradient-to-br ${paymentConfig.gradient} shadow-sm`}
-      >
-        {/* Accent top strip */}
-        <div className={`h-1 w-full ${paymentConfig.accentBar} opacity-60`} />
-
-        <div className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <CreditCard className="w-4 h-4 text-primary" />
-              <h3 className="text-sm font-bold text-foreground">{t(lang, "Payment Status", "கட்டண நிலை")}</h3>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {paymentConfig.icon}
-              <StatusBadge status={student.payment_status} />
-            </div>
-          </div>
-
-          <div className="flex items-end justify-between">
-            <div>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider font-semibold">{t(lang, "Monthly Fee", "மாத கட்டணம்")}</p>
-              <div className="flex items-baseline gap-1 mt-0.5">
-                <span className="text-3xl font-black text-foreground tracking-tight">Rs. 530</span>
-                <span className="text-sm font-normal text-muted-foreground">.00</span>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="text-[10px] text-muted-foreground">{new Date().toLocaleString("en-US", { month: "long", year: "numeric" })}</p>
-              <p className="text-[11px] font-semibold text-foreground mt-0.5">
-                {student.payment_status === "paid"
-                  ? t(lang, " ", "")
-                  : student.payment_status === "pending"
-                  ? t(lang, "Due before 25th", "25-க்குள் செலுத்தவும்")
-                  : t(lang, "Payment Overdue", "கட்டணம் தாமதமானது")}
-              </p>
-            </div>
-          </div>
-
-          
-
-          {studentPayments.length > 0 && (
-            <div className="mt-3 border-t border-border/30 pt-3">
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center justify-between w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
-                  <TrendingUp className="w-3 h-3" />
-                  {t(lang, "Payment History", "கட்டண வரலாறு")} ({studentPayments.length})
-                </span>
-                {showHistory ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-              <AnimatePresence>
-                {showHistory && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="pt-2 space-y-1.5">
-                      {studentPayments.map(h => (
-                        <div key={h.id} className="flex items-center justify-between text-xs py-1.5 border-b border-border/20 last:border-0">
-                          <span className="text-muted-foreground font-medium">{h.month}</span>
-                          <div className="flex items-center gap-2">
-                            {h.paid_date && <span className="text-muted-foreground/70">{h.paid_date}</span>}
-                            <StatusBadge status={h.status} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
-        </div>
-      </motion.div>
+      {/* ── PRO PAYMENT CARD (with auto date logic) ── */}
+      <PaymentStatusCard
+        student={student}
+        paymentHistory={paymentHistory}
+        lang={lang}
+      />
 
       {/* ── PERSONAL DETAILS ── */}
       <motion.div

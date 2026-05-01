@@ -105,8 +105,42 @@ export function useStore() {
     setLoading(false);
   }, []);
 
+  // ── Auto Payment Date Logic (runs on app load) ───────────
+  const runAutoPaymentCheck = useCallback(async () => {
+    if (!navigator.onLine) return;
+
+    const now   = new Date();
+    const day   = now.getDate();
+    const month = now.getMonth() + 1;
+    const year  = now.getFullYear();
+
+    // Month 1st → reset ALL students to pending
+    if (day === 1) {
+      const key = `auto_reset_all_${month}_${year}`;
+      if (!localStorage.getItem(key)) {
+        try {
+          await (supabase.rpc as any)("auto_reset_payments_pending");
+          localStorage.setItem(key, "1");
+          await fetchAll(); // refresh UI
+        } catch (e) { console.warn("[auto] reset failed", e); }
+      }
+    }
+
+    // 26th to month end → mark ALL pending students as late
+    if (day >= 26) {
+      const key = `auto_late_all_${month}_${year}`;
+      if (!localStorage.getItem(key)) {
+        try {
+          await (supabase.rpc as any)("auto_mark_late_payments");
+          localStorage.setItem(key, "1");
+          await fetchAll(); // refresh UI
+        } catch (e) { console.warn("[auto] late failed", e); }
+      }
+    }
+  }, [fetchAll]);
+
   useEffect(() => {
-    fetchAll();
+    fetchAll().then(() => runAutoPaymentCheck());
 
     const channel = supabase
       .channel("realtime-pro")
