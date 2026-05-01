@@ -146,12 +146,6 @@ export default function SignUpPage({ onBack }: Props) {
         options: {
           // email confirmation skip — direct session
           emailRedirectTo: window.location.origin,
-          data: {
-            full_name: form.full_name,
-            student_phone: form.student_phone,
-            batch: form.batch,
-            stream: form.stream,
-          },
         },
       });
 
@@ -211,7 +205,6 @@ export default function SignUpPage({ onBack }: Props) {
         parent_phone: form.parent_phone || null,
         payment_status: 'pending' as any,
         account_status: 'active' as any,
-        auto_id: '',
       } as any, { onConflict: 'user_id' });
 
       if (studentError) {
